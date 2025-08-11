@@ -138,6 +138,33 @@ export default function Player({
     }
   }
 
+  // expose imperative API via DOM dataset for simple external control (MVP)
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const api = {
+      play: () => void video.play(),
+      pause: () => video.pause(),
+      seek: (to: number) => {
+        try {
+          video.currentTime = Math.max(0, to)
+        } catch {}
+      },
+      setRate: (r: number) => {
+        try {
+          video.playbackRate = Math.max(0.25, Math.min(4, r))
+        } catch {}
+      },
+      getCurrentTime: () => video.currentTime || 0,
+    }
+    ;(video as any)._playerApi = api
+    return () => {
+      try {
+        delete (video as any)._playerApi
+      } catch {}
+    }
+  }, [])
+
   const handleSeek = (value: number) => {
     const video = videoRef.current
     if (!video || !isFinite(value)) return
@@ -166,10 +193,8 @@ export default function Player({
 
   const enterPip = async () => {
     const video = videoRef.current
-    // @ts-expect-error newer browsers
     if (video && document.pictureInPictureEnabled && !video.disablePictureInPicture) {
       try {
-        // @ts-expect-error pip
         await video.requestPictureInPicture()
       } catch {}
     }
