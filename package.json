@@ -7,7 +7,7 @@
     "start": "vite --port 3000",
     "build": "vite build && tsc",
     "serve": "vite preview",
-    "ws": "WS_BASE_PATH=/my-path tsx server/index.ts",
+    "ws": "WS_BASE_PATH=/vid-ws tsx server/index.ts",
     "ws:dev": "tsx server/index.ts",
     "test": "vitest run",
     "lint": "eslint",
