@@ -64,6 +64,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  perMessageDeflate: false,
 })
 
 io.on('connection', (socket) => {
@@ -121,7 +122,7 @@ io.on('connection', (socket) => {
     const now = Date.now()
     room.state.baseMediaTime = Math.max(0, payload?.toMediaTime ?? 0)
     room.state.baseServerTime = now
-    io.to(joinedRoomId).emit('state', room.state)
+    io.volatile.to(joinedRoomId).emit('state', room.state)
   })
 
   socket.on('rate', (payload: { playbackRate: number }) => {
@@ -134,7 +135,7 @@ io.on('connection', (socket) => {
     room.state.baseMediaTime = current
     room.state.baseServerTime = now
     room.state.playbackRate = Math.max(0.25, Math.min(4, payload?.playbackRate ?? 1))
-    io.to(joinedRoomId).emit('state', room.state)
+    io.volatile.to(joinedRoomId).emit('state', room.state)
   })
 
   socket.on('ready', (payload: { ready: boolean }) => {
@@ -164,6 +165,9 @@ io.on('connection', (socket) => {
       }
     }
     io.to(joinedRoomId).emit('presence', { users: Array.from(room.users.values()) })
+    if (room.users.size === 0) {
+      rooms.delete(joinedRoomId)
+    }
   })
 })
 

@@ -49,6 +49,10 @@ export function connectSocket({
     forceNew: true,
     withCredentials: true,
     query,
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 500,
+    timeout: 8000,
   }) as ClientSocket
   return socket
 }

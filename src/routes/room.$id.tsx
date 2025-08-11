@@ -10,6 +10,7 @@ export const Route = createFileRoute('/room/$id')({
 function RoomPage() {
   const { id } = useParams({ from: '/room/$id' })
   const [state, setState] = useState<ServerState | null>(null)
+  const stateRef = useRef<ServerState | null>(null)
   const [users, setUsers] = useState<Array<{ id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }>>([])
   const socketRef = useRef<ClientSocket | null>(null)
   const skewRef = useRef(0)
@@ -25,8 +26,14 @@ function RoomPage() {
     socketRef.current = socket
 
     socket.on('connect', () => setMyId(socket.id || ''))
-    socket.on('state', (s) => setState({ ...s }))
-    socket.on('resync', (s) => setState({ ...s }))
+    socket.on('state', (s) => {
+      stateRef.current = s
+      setState({ ...s })
+    })
+    socket.on('resync', (s) => {
+      stateRef.current = s
+      setState({ ...s })
+    })
     socket.on('presence', (p) => setUsers(p.users))
 
     // clock skew estimate
@@ -51,18 +58,20 @@ function RoomPage() {
     }
   }, [id, wsUrl, wsBasePath])
 
-  // Drift correction loop (non-host only)
+  // Drift correction loop (non-host only, stable interval)
   useEffect(() => {
-    if (!state || isHost) return
+    if (isHost) return
+    const rateResetRef = { id: 0 as unknown as number }
     const iv = setInterval(() => {
+      const s = stateRef.current
       const video = videoRef.current
-      if (!video) return
+      if (!s || !video) return
       const api = (video as any)._playerApi as
         | { play: () => void; pause: () => void; seek: (t: number) => void; setRate: (r: number) => void; getCurrentTime: () => number }
         | undefined
       if (!api) return
       const now = Date.now() + skewRef.current
-      const target = computeTargetTime(state, now)
+      const target = computeTargetTime(s, now)
       const current = api.getCurrentTime()
       const drift = current - target
 
@@ -70,17 +79,20 @@ function RoomPage() {
       if (abs > 0.4) {
         api.seek(target)
       } else if (abs > 0.1) {
-        // nudge rate briefly
+        // Nudge rate briefly, clear previous reset
         api.setRate(drift > 0 ? 0.95 : 1.05)
-        setTimeout(() => api.setRate(1), 800)
-      } else if (state.isPlaying && (video as any).paused) {
+        if (rateResetRef.id) clearTimeout(rateResetRef.id)
+        rateResetRef.id = setTimeout(() => api.setRate(1), 800) as unknown as number
+      } else if (s.isPlaying && (video as any).paused) {
         api.play()
-      } else if (!state.isPlaying && !(video as any).paused) {
+      } else if (!s.isPlaying && !(video as any).paused) {
         api.pause()
       }
     }, 500)
-    return () => clearInterval(iv)
-  }, [state, isHost])
+    return () => {
+      clearInterval(iv)
+    }
+  }, [isHost])
 
   // Host-only: emit controls based on local player actions
   useEffect(() => {

@@ -36,6 +36,7 @@ export default function Player({
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const lastTimeUpdateRef = useRef(0)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(mutedByDefault)
@@ -66,6 +67,9 @@ export default function Player({
         const hls = new Hls({
           enableWorker: true,
           backBufferLength: 90,
+          capLevelToPlayerSize: true,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
         })
         hlsRef.current = hls
         hls.attachMedia(video)
@@ -106,9 +110,18 @@ export default function Player({
         } catch {}
       }
     }
-    const onTimeUpdate = () => setCurrent(video.currentTime || 0)
+    const onTimeUpdate = () => {
+      const now = performance.now()
+      if (now - lastTimeUpdateRef.current >= 200) {
+        lastTimeUpdateRef.current = now
+        setCurrent(video.currentTime || 0)
+      }
+    }
     const onPlay = () => setIsPlaying(true)
-    const onPause = () => setIsPlaying(false)
+    const onPause = () => {
+      setIsPlaying(false)
+      setCurrent(video.currentTime || 0)
+    }
     const onError = () => setErrorMessage('Playback error. Please try again.')
 
     video.addEventListener('loadedmetadata', onLoadedMetadata)
