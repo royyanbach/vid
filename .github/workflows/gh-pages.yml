@@ -22,9 +22,9 @@ jobs:
     env:
       # Ensure Vite sees your variables at build time
       VITE_BASE: /vid/
-      VITE_HLS_URL: ${{ vars.VITE_HLS_URL }}
-      VITE_WS_URL: ${{ vars.VITE_WS_URL }}
-      VITE_WS_BASE_PATH: ${{ vars.VITE_WS_BASE_PATH }}
+      VITE_HLS_URL: ${{ secrets.VITE_HLS_URL }}
+      VITE_WS_URL: ${{ secrets.VITE_WS_URL }}
+      VITE_WS_BASE_PATH: ${{ secrets.VITE_WS_BASE_PATH }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
