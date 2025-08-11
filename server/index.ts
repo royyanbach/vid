@@ -40,7 +40,7 @@ function getOrCreateRoom(roomId: string): Room {
 
 const PORT = Number(process.env.PORT || 4000)
 // Public base URL for hosting under a prefix, e.g., /my-path
-const BASE_PATH = (process.env.WS_BASE_PATH || '').trim().replace(/\/?$/, '') // no trailing slash
+const BASE_PATH = (process.env.WS_BASE_PATH || '/vid-ws').trim().replace(/\/?$/, '') // no trailing slash
 // Socket.IO path must include the base path for subpath hosting
 const IO_PATH = `${BASE_PATH}/socket.io`
 const HEALTH_PATH = `${BASE_PATH || ''}/health`.replace(/^\//, '/')

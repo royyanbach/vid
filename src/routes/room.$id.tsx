@@ -17,8 +17,8 @@ function RoomPage() {
   const [myId, setMyId] = useState<string>('')
   const isHost = useMemo(() => users.some((u) => u.id === myId && u.role === 'host'), [users, myId])
 
-  const wsUrl = useMemo(() => (import.meta.env.VITE_WS_URL as string) || 'ws://localhost:4000', [])
-  const wsBasePath = useMemo(() => (import.meta.env.VITE_WS_BASE_PATH as string) || '', [])
+  const wsUrl = useMemo(() => (import.meta.env.VITE_WS_URL as string) || 'wss://playground.royyanba.ch', [])
+  const wsBasePath = useMemo(() => (import.meta.env.VITE_WS_BASE_PATH as string) || '/vid-ws', [])
 
   useEffect(() => {
     const socket = connectSocket({ baseUrl: wsUrl, basePath: wsBasePath, query: { roomId: id } })
