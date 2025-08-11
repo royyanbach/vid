@@ -17,6 +17,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Target the same environment if you stored variables under it
+    environment: github-pages
+    env:
+      # Ensure Vite sees your variables at build time
+      VITE_BASE: /vid/
+      VITE_HLS_URL: ${{ vars.VITE_HLS_URL }}
+      VITE_WS_URL: ${{ vars.VITE_WS_URL }}
+      VITE_WS_BASE_PATH: ${{ vars.VITE_WS_BASE_PATH }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,8 +42,6 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Build
-        env:
-          VITE_BASE: /vid/
         run: yarn build
 
       - name: Add SPA fallback (404.html)
