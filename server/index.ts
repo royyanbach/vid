@@ -16,6 +16,7 @@ type Room = {
   state: RoomState
   users: Map<string, PresenceUser>
   hostSocketId?: string
+  heartbeat?: NodeJS.Timeout
 }
 
 const rooms = new Map<string, Room>()
@@ -87,6 +88,13 @@ io.on('connection', (socket) => {
 
     socket.emit('state', room.state)
     io.to(roomId).emit('presence', { users: Array.from(room.users.values()) })
+
+    if (!room.heartbeat) {
+      room.heartbeat = setInterval(() => {
+        // Periodic state broadcast for eventual consistency
+        io.to(roomId).emit('state', room.state)
+      }, 2000)
+    }
   })
 
   socket.on('play', () => {
@@ -166,6 +174,9 @@ io.on('connection', (socket) => {
     }
     io.to(joinedRoomId).emit('presence', { users: Array.from(room.users.values()) })
     if (room.users.size === 0) {
+      if (room.heartbeat) {
+        clearInterval(room.heartbeat)
+      }
       rooms.delete(joinedRoomId)
     }
   })

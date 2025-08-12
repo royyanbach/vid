@@ -14,9 +14,11 @@ function RoomPage() {
   const [users, setUsers] = useState<Array<{ id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }>>([])
   const socketRef = useRef<ClientSocket | null>(null)
   const skewRef = useRef(0)
+  const skewEmaRef = useRef(0)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [myId, setMyId] = useState<string>('')
   const isHost = useMemo(() => users.some((u) => u.id === myId && u.role === 'host'), [users, myId])
+  const piRef = useRef({ integral: 0, lastTime: 0 })
 
   const wsUrl = useMemo(() => (import.meta.env.VITE_WS_URL as string) || 'wss://playground.royyanba.ch', [])
   const wsBasePath = useMemo(() => (import.meta.env.VITE_WS_BASE_PATH as string) || '/vid-ws', [])
@@ -26,13 +28,41 @@ function RoomPage() {
     socketRef.current = socket
 
     socket.on('connect', () => setMyId(socket.id || ''))
+    const applyStateToPlayer = (s: ServerState) => {
+      if (isHost) return
+      const video = videoRef.current
+      const api = (video as any)?._playerApi as
+        | { play: () => void; pause: () => void; seek: (t: number) => void; setRate: (r: number) => void; getCurrentTime: () => number }
+        | undefined
+      if (!video || !api) return
+      const now = Date.now() + skewRef.current
+      const target = computeTargetTime(s, now)
+      const current = api.getCurrentTime()
+      const drift = current - target
+      if (Math.abs(drift) > 1.5) {
+        api.seek(target)
+        piRef.current.integral = 0
+      }
+      // Align play/pause immediately
+      if (s.isPlaying && (video as any).paused) api.play()
+      if (!s.isPlaying && !(video as any).paused) api.pause()
+      // Sync baseline playbackRate (PI loop will micro-adjust)
+      try {
+        if (Math.abs((video as any).playbackRate - (s.playbackRate || 1)) > 0.001) {
+          api.setRate(s.playbackRate || 1)
+        }
+      } catch {}
+    }
+
     socket.on('state', (s) => {
       stateRef.current = s
       setState({ ...s })
+      applyStateToPlayer(s)
     })
     socket.on('resync', (s) => {
       stateRef.current = s
       setState({ ...s })
+      applyStateToPlayer(s)
     })
     socket.on('presence', (p) => setUsers(p.users))
 
@@ -45,7 +75,11 @@ function RoomPage() {
       const t2 = Date.now()
       const rtt = t2 - t0
       const serverTimeAtRecv = t1 + rtt / 2
-      skewRef.current = serverTimeAtRecv - t2
+      const measuredSkew = serverTimeAtRecv - t2
+      const alpha = 0.2
+      skewEmaRef.current = (1 - alpha) * skewEmaRef.current + alpha * measuredSkew
+      skewRef.current = skewEmaRef.current
+      ;(window as any).__lastRTT = rtt
     })
 
     socket.emit('join', { roomId: id })
@@ -58,41 +92,135 @@ function RoomPage() {
     }
   }, [id, wsUrl, wsBasePath])
 
-  // Drift correction loop (non-host only, stable interval)
+  // Drift correction loop (non-host only, prefer rVFC, fallback interval) using a PI controller
   useEffect(() => {
     if (isHost) return
     const rateResetRef = { id: 0 as unknown as number }
+    let useIntervalFallback = true
+    const video = videoRef.current
+    const api = (video as any)?._playerApi as
+      | { play: () => void; pause: () => void; seek: (t: number) => void; setRate: (r: number) => void; getCurrentTime: () => number }
+      | undefined
+    if (!video || !api) return
+
+    // rVFC-based loop (if supported)
+    if ('requestVideoFrameCallback' in video) {
+      useIntervalFallback = false
+      let lastCheck = 0
+      let rafId = 0 as unknown as number
+      const tick = (_now: number) => {
+        const s = stateRef.current
+        if (!s) return
+        const nowMs = performance.now()
+        if (nowMs - lastCheck >= 300) {
+          lastCheck = nowMs
+          const target = computeTargetTime(s, Date.now() + skewRef.current)
+          const current = api.getCurrentTime()
+          const drift = current - target
+          const abs = Math.abs(drift)
+          if (abs > 1.5) {
+            api.seek(target)
+            piRef.current.integral = 0
+          } else {
+            // PI controller around baseline rate
+            const baseline = s.playbackRate || 1
+            const now = performance.now()
+            const dt = Math.max(0.05, (now - piRef.current.lastTime) / 1000)
+            piRef.current.lastTime = now
+            // accumulate only when playing
+            if (s.isPlaying && !(video as any).paused) {
+              piRef.current.integral += drift * dt
+              // clamp integral to avoid windup
+              piRef.current.integral = Math.max(-2, Math.min(2, piRef.current.integral))
+            }
+            const Kp = 0.25
+            const Ki = 0.05
+            let nextRate = baseline - Kp * drift - Ki * piRef.current.integral
+            const minRate = Math.max(0.5, baseline - 0.15)
+            const maxRate = Math.min(2.0, baseline + 0.15)
+            nextRate = Math.max(minRate, Math.min(maxRate, nextRate))
+            if (Math.abs((video as any).playbackRate - nextRate) > 0.005) {
+              api.setRate(nextRate)
+            }
+          }
+          if (s.isPlaying && (video as any).paused) {
+            void api.play()
+          } else if (!s.isPlaying && !(video as any).paused) {
+            api.pause()
+          }
+        }
+        rafId = (video as any).requestVideoFrameCallback(tick)
+      }
+      rafId = (video as any).requestVideoFrameCallback(tick)
+      return () => {
+        if (rafId) (video as any).cancelVideoFrameCallback?.(rafId)
+        if (rateResetRef.id) clearTimeout(rateResetRef.id)
+      }
+    }
+
+    // Fallback interval loop
+    if (useIntervalFallback) {
+      const iv = setInterval(() => {
+        const s = stateRef.current
+        if (!s) return
+        const target = computeTargetTime(s, Date.now() + skewRef.current)
+        const current = api.getCurrentTime()
+        const drift = current - target
+        const abs = Math.abs(drift)
+        if (abs > 1.5) {
+          api.seek(target)
+          piRef.current.integral = 0
+        } else {
+          const baseline = s.playbackRate || 1
+          const now = performance.now()
+          const dt = Math.max(0.05, (now - piRef.current.lastTime) / 1000)
+          piRef.current.lastTime = now
+          if (s.isPlaying && !(video as any).paused) {
+            piRef.current.integral += drift * dt
+            piRef.current.integral = Math.max(-2, Math.min(2, piRef.current.integral))
+          }
+          const Kp = 0.25
+          const Ki = 0.05
+          let nextRate = baseline - Kp * drift - Ki * piRef.current.integral
+          const minRate = Math.max(0.5, baseline - 0.15)
+          const maxRate = Math.min(2.0, baseline + 0.15)
+          nextRate = Math.max(minRate, Math.min(maxRate, nextRate))
+          if (Math.abs((video as any).playbackRate - nextRate) > 0.005) {
+            api.setRate(nextRate)
+          }
+        }
+        if (s.isPlaying && (video as any).paused) {
+          void api.play()
+        } else if (!s.isPlaying && !(video as any).paused) {
+          api.pause()
+        }
+      }, 500)
+      return () => {
+        clearInterval(iv)
+        if (rateResetRef.id) clearTimeout(rateResetRef.id)
+      }
+    }
+  }, [isHost])
+
+  // Optional debug metrics overlay
+  // Optional debug metrics overlay (only if ?debug)
+  const debugEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')
+  const [debug, setDebug] = useState<{ drift: number; rtt: number; skew: number } | null>(null)
+  useEffect(() => {
+    if (!debugEnabled) return
     const iv = setInterval(() => {
       const s = stateRef.current
       const video = videoRef.current
-      if (!s || !video) return
-      const api = (video as any)._playerApi as
-        | { play: () => void; pause: () => void; seek: (t: number) => void; setRate: (r: number) => void; getCurrentTime: () => number }
-        | undefined
-      if (!api) return
-      const now = Date.now() + skewRef.current
-      const target = computeTargetTime(s, now)
+      const api = (video as any)?._playerApi
+      if (!s || !video || !api) return
+      const target = computeTargetTime(s, Date.now() + skewRef.current)
       const current = api.getCurrentTime()
       const drift = current - target
-
-      const abs = Math.abs(drift)
-      if (abs > 0.4) {
-        api.seek(target)
-      } else if (abs > 0.1) {
-        // Nudge rate briefly, clear previous reset
-        api.setRate(drift > 0 ? 0.95 : 1.05)
-        if (rateResetRef.id) clearTimeout(rateResetRef.id)
-        rateResetRef.id = setTimeout(() => api.setRate(1), 800) as unknown as number
-      } else if (s.isPlaying && (video as any).paused) {
-        api.play()
-      } else if (!s.isPlaying && !(video as any).paused) {
-        api.pause()
-      }
+      const rtt = (window as any).__lastRTT || 0
+      setDebug({ drift, rtt, skew: skewRef.current })
     }, 500)
-    return () => {
-      clearInterval(iv)
-    }
-  }, [isHost])
+    return () => clearInterval(iv)
+  }, [debugEnabled])
 
   // Host-only: emit controls based on local player actions
   useEffect(() => {
@@ -127,6 +255,14 @@ function RoomPage() {
           Back Home
         </Link>
       </div>
+
+      {debugEnabled && debug ? (
+        <div className="fixed bottom-3 right-3 text-xs bg-black/70 text-white rounded px-2 py-1">
+          <div>drift: {debug.drift.toFixed(3)}s</div>
+          <div>rtt: {debug.rtt}ms</div>
+          <div>skew: {debug.skew.toFixed(1)}ms</div>
+        </div>
+      ) : null}
 
       {/* Attach a ref to access the internal API via the video element handle */}
       <div

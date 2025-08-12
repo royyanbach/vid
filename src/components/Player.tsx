@@ -101,6 +101,11 @@ export default function Player({
 
     video.muted = isMuted
     video.volume = volume
+    try {
+      ;(video as any).preservesPitch = false
+      ;(video as any).mozPreservesPitch = false
+      ;(video as any).webkitPreservesPitch = false
+    } catch {}
 
     const onLoadedMetadata = () => {
       setDuration(video.duration || 0)
