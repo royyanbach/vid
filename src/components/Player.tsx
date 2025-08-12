@@ -25,6 +25,9 @@ type PlayerProps = {
     lang?: string
     default?: boolean
   }>
+  fullBleed?: boolean
+  onControlsVisibilityChange?: (visible: boolean) => void
+  chatAccessory?: React.ReactNode
 }
 
 function formatTime(totalSeconds: number): string {
@@ -60,6 +63,9 @@ export default function Player({
   mutedByDefault = true,
   startTime = 0,
   subtitles = [],
+  fullBleed = false,
+  onControlsVisibilityChange,
+  chatAccessory,
 }: PlayerProps) {
   const defaultSrc = useMemo(() => {
     return (
@@ -320,6 +326,11 @@ export default function Player({
     return () => window.clearTimeout(id)
   }, [areControlsVisible, effectiveSubtitles, defaultSrc])
 
+  // Notify parent about controls visibility changes
+  useEffect(() => {
+    onControlsVisibilityChange?.(areControlsVisible)
+  }, [areControlsVisible, onControlsVisibilityChange])
+
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
@@ -465,9 +476,9 @@ export default function Player({
   }
 
   return (
-    <div className="w-full max-w-5xl mx-auto rounded-lg overflow-hidden bg-black/95 shadow-lg">
+    <div className={fullBleed ? 'w-full h-full overflow-hidden bg-black' : 'w-full max-w-5xl mx-auto rounded-lg overflow-hidden bg-black/95 shadow-lg'}>
       <div
-        className={`relative aspect-video bg-black ${isPlaying && !areControlsVisible ? 'cursor-none' : ''}`}
+        className={`${fullBleed ? 'relative w-full h-full bg-black' : 'relative aspect-video bg-black'} ${isPlaying && !areControlsVisible ? 'cursor-none' : ''}`}
         onMouseMove={handleContainerMouseMove}
         onDoubleClick={toggleFullscreen}
         onClick={() => {
@@ -477,7 +488,7 @@ export default function Player({
       >
         <video
           ref={videoRef}
-          className="size-full"
+          className={fullBleed ? 'absolute inset-0 w-full h-full object-contain bg-black' : 'size-full'}
           poster={poster}
           playsInline
           controls={false}
@@ -530,102 +541,112 @@ export default function Player({
           className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/60 to-transparent transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0'}`}
         />
 
-        {/* Bottom Controls Overlay */}
-        <div
-          className={`absolute inset-x-0 bottom-0 p-3 text-white transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0'}`}
-          onMouseEnter={() => setIsControlsHovered(true)}
-          onMouseLeave={() => setIsControlsHovered(false)}
-        >
-          <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2">
-            {/* Seek bar */}
-            <div className="flex items-center gap-3 px-2">
-              <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(current)}</span>
-              <input
-                type="range"
-                min={0}
-                max={duration || 0}
-                step={0.05}
-                value={isFinite(current) ? current : 0}
-                onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                onInput={revealControls}
-                className="flex-1 accent-primary h-1.5 rounded-full bg-white/20"
-                aria-label="Seek"
-              />
-              <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(duration)}</span>
-            </div>
-
-            {/* Buttons Row */}
-            <div className="mt-2 flex items-center gap-2 px-1">
-              <button
-                className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                onClick={togglePlay}
-                aria-label={isPlaying ? 'Pause' : 'Play'}
-              >
-                {isPlaying ? <Pause className="size-5" /> : <Play className="size-5" />}
-              </button>
-              <button
-                className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                onClick={() => handleSeek(Math.max(0, current - 10))}
-                aria-label="Seek backward 10 seconds"
-              >
-                <SkipBack className="size-5" />
-              </button>
-              <button
-                className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                onClick={() => handleSeek(Math.min(duration || current + 10, current + 10))}
-                aria-label="Seek forward 10 seconds"
-              >
-                <SkipForward className="size-5" />
-              </button>
-
-              {/* Volume */}
-              <div className="ml-1 flex items-center gap-2">
-                <button
-                  className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                  onClick={handleMuteToggle}
-                  aria-label={isMuted ? 'Unmute' : 'Mute'}
-                >
-                  {volumeIcon()}
-                </button>
+        {/* Bottom bar: controls (auto-hide) + chat accessory (always visible) */}
+        <div className="absolute inset-x-0 bottom-0 p-3 text-white flex items-end gap-3">
+          {/* Controls block with gradient background, auto-hide */}
+          <div
+            className={`flex-1 transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            onMouseEnter={() => setIsControlsHovered(true)}
+            onMouseLeave={() => setIsControlsHovered(false)}
+          >
+            <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2">
+              {/* Seek bar */}
+              <div className="flex items-center gap-3 px-2">
+                <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(current)}</span>
                 <input
                   type="range"
                   min={0}
-                  max={1}
-                  step={0.01}
-                  value={volume}
-                  onChange={(e) => handleVolume(parseFloat(e.target.value))}
+                  max={duration || 0}
+                  step={0.05}
+                  value={isFinite(current) ? current : 0}
+                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
                   onInput={revealControls}
-                  className="w-28 accent-primary h-1.5 rounded-full bg-white/20"
-                  aria-label="Volume"
+                  className="flex-1 accent-primary h-1.5 rounded-full bg-white/20"
+                  aria-label="Seek"
                 />
+                <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(duration)}</span>
               </div>
 
-              {/* Right side actions */}
-              <div className="ml-auto flex items-center gap-2">
+              {/* Buttons Row */}
+              <div className="mt-2 flex items-center gap-2 px-1">
                 <button
-                  className={`size-8 grid place-items-center rounded ring-1 ring-white/10 ${areCaptionsVisible ? 'bg-white/20 hover:bg-white/25' : 'bg-white/10 hover:bg-white/15'}`}
-                  onClick={toggleCaptions}
-                  aria-label="Toggle captions"
+                  className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                  onClick={togglePlay}
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
                 >
-                  <Captions className="size-5" />
+                  {isPlaying ? <Pause className="size-5" /> : <Play className="size-5" />}
                 </button>
                 <button
                   className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                  onClick={enterPip}
-                  aria-label="Picture in Picture"
+                  onClick={() => handleSeek(Math.max(0, current - 10))}
+                  aria-label="Seek backward 10 seconds"
                 >
-                  <PictureInPicture className="size-5" />
+                  <SkipBack className="size-5" />
                 </button>
                 <button
                   className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                  onClick={toggleFullscreen}
-                  aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                  onClick={() => handleSeek(Math.min(duration || current + 10, current + 10))}
+                  aria-label="Seek forward 10 seconds"
                 >
-                  {isFullscreen ? <Minimize className="size-5" /> : <Maximize className="size-5" />}
+                  <SkipForward className="size-5" />
                 </button>
+
+                {/* Volume */}
+                <div className="ml-1 flex items-center gap-2">
+                  <button
+                    className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                    onClick={handleMuteToggle}
+                    aria-label={isMuted ? 'Unmute' : 'Mute'}
+                  >
+                    {volumeIcon()}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={volume}
+                    onChange={(e) => handleVolume(parseFloat(e.target.value))}
+                    onInput={revealControls}
+                    className="w-28 accent-primary h-1.5 rounded-full bg-white/20"
+                    aria-label="Volume"
+                  />
+                </div>
+
+                {/* Right side actions */}
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    className={`size-8 grid place-items-center rounded ring-1 ring-white/10 ${areCaptionsVisible ? 'bg-white/20 hover:bg-white/25' : 'bg-white/10 hover:bg-white/15'}`}
+                    onClick={toggleCaptions}
+                    aria-label="Toggle captions"
+                  >
+                    <Captions className="size-5" />
+                  </button>
+                  <button
+                    className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                    onClick={enterPip}
+                    aria-label="Picture in Picture"
+                  >
+                    <PictureInPicture className="size-5" />
+                  </button>
+                  <button
+                    className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                    onClick={toggleFullscreen}
+                    aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                  >
+                    {isFullscreen ? <Minimize className="size-5" /> : <Maximize className="size-5" />}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
+
+          {/* Chat accessory: stays visible */}
+          {chatAccessory ? (
+            <div className="shrink-0">
+              {chatAccessory}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

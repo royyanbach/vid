@@ -13,6 +13,14 @@ export type Presence = {
   users: Array<{ id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }>
 }
 
+export type ChatMessage = {
+  id: string
+  userId: string
+  name: string
+  ts: number
+  text: string
+}
+
 export type ClientSocket = Socket<
   {
     state: (s: ServerState) => void
@@ -20,6 +28,7 @@ export type ClientSocket = Socket<
     presence: (p: Presence) => void
     pong: (p: { t0: number; t1: number }) => void
     error: (e: { code: string; message: string }) => void
+    chat: (m: ChatMessage) => void
   },
   {
     join: (p: { roomId: string; name?: string; asHost?: boolean; src?: string }) => void
@@ -30,6 +39,7 @@ export type ClientSocket = Socket<
     ready: (p: { ready: boolean }) => void
     ping: (p: { t0: number }) => void
     subtitles: (p: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => void
+    'chat:send': (p: { text: string }) => void
   }
 >
 

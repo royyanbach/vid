@@ -1,7 +1,9 @@
-import { Link, createFileRoute, useParams } from '@tanstack/react-router'
+import { createFileRoute, useParams } from '@tanstack/react-router'
 import Player from '@/components/Player'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { type ClientSocket, type ServerState, computeTargetTime, connectSocket } from '@/lib/ws'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ClientSocket, type ServerState, computeTargetTime, connectSocket, type ChatMessage } from '@/lib/ws'
+import { Button } from '@/components/ui/button'
+import { MessageSquare } from 'lucide-react'
 
 export const Route = createFileRoute('/room/$id')({
   component: RoomPage,
@@ -12,6 +14,9 @@ function RoomPage() {
   const [state, setState] = useState<ServerState | null>(null)
   const stateRef = useRef<ServerState | null>(null)
   const [users, setUsers] = useState<Array<{ id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }>>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const chatOpenRef = useRef(false)
   const socketRef = useRef<ClientSocket | null>(null)
   const skewRef = useRef(0)
   const skewEmaRef = useRef(0)
@@ -22,6 +27,10 @@ function RoomPage() {
   const lastPlayReqRef = useRef(0)
   const lastPauseReqRef = useRef(0)
   const lastSeekAtRef = useRef(0)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [controlsVisible, setControlsVisible] = useState(true)
+  const chatButtonRef = useRef<HTMLButtonElement | null>(null)
+  const chatPopupRef = useRef<HTMLDivElement | null>(null)
 
   const ensurePlaybackState = useCallback((desiredPlaying: boolean) => {
     const video = videoRef.current
@@ -100,6 +109,18 @@ function RoomPage() {
       applyStateToPlayer(s)
     })
     socket.on('presence', (p) => setUsers(p.users))
+    // chat wires
+    socket.on('chat', (m) => {
+      setMessages((prev) => {
+        const next = [...prev, m]
+        // keep bounded length on client too
+        if (next.length > 300) next.splice(0, next.length - 300)
+        return next
+      })
+      // increment unread if widget is closed
+      setUnreadCount((prev) => (chatOpenRef.current ? 0 : Math.min(999, prev + 1)))
+    })
+    // no more chat history on join: save memory and avoid replay
 
     // clock skew estimate
     const ping = () => {
@@ -126,6 +147,12 @@ function RoomPage() {
       socket.disconnect()
     }
   }, [id, wsUrl, wsBasePath])
+
+  // keep ref in sync to avoid stale closure in socket handler
+  useEffect(() => {
+    chatOpenRef.current = chatOpen
+    if (chatOpen) setUnreadCount(0)
+  }, [chatOpen])
 
   // Drift correction loop (non-host only, prefer rVFC, fallback interval) using a PI controller
   useEffect(() => {
@@ -251,6 +278,22 @@ function RoomPage() {
     return () => clearInterval(iv)
   }, [debugEnabled])
 
+  // Close chat when clicking anywhere outside the chat popup/button
+  useEffect(() => {
+    const handler = (e: PointerEvent) => {
+      // we'll read latest state via ref to avoid stale closure
+      ;(handler as any)._open = chatOpen
+      if (!(handler as any)._open) return
+      const target = e.target as Node | null
+      if (!target) return
+      if (chatPopupRef.current && chatPopupRef.current.contains(target)) return
+      if (chatButtonRef.current && chatButtonRef.current.contains(target)) return
+      setChatOpen(false)
+    }
+    window.addEventListener('pointerdown', handler as any, { passive: true })
+    return () => window.removeEventListener('pointerdown', handler as any)
+  }, [chatOpen])
+
   // Host-only: emit controls based on local player actions
   useEffect(() => {
     const video = videoRef.current
@@ -276,7 +319,6 @@ function RoomPage() {
     }
   }, [isHost])
 
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const effectiveSrc = state?.src || initialSrc
   const effectiveSubtitles = (state?.subtitles && state.subtitles.length > 0)
     ? state.subtitles
@@ -313,108 +355,214 @@ function RoomPage() {
   }, [derivedSubtitleUrl])
 
   return (
-    <div className={`h-dvh grid grid-cols-1 ${sidebarOpen ? 'md:grid-cols-[1fr_minmax(280px,360px)]' : 'md:grid-cols-1'}`}>
-      <div className="relative p-3 md:p-4 overflow-y-auto flex items-center justify-center bg-gray-100">
-        {debugEnabled && debug ? (
-          <div className="fixed bottom-3 right-3 text-xs bg-black/70 text-white rounded px-2 py-1 z-10">
-            <div>drift: {debug.drift.toFixed(3)}s</div>
-            <div>rtt: {debug.rtt}ms</div>
-            <div>skew: {debug.skew.toFixed(1)}ms</div>
-          </div>
-        ) : null}
-
+    <div className="relative h-dvh w-dvw bg-black">
+      {/* Centered player */}
+      <div className="absolute inset-0 flex items-center justify-center">
         <div
           ref={(el) => {
             videoRef.current = (el?.querySelector('video') as HTMLVideoElement) || null
           }}
+          className="w-full h-full"
         >
           {effectiveSrc ? (
             <Player
               src={effectiveSrc}
               subtitles={effectiveSubtitles}
+              fullBleed
+              onControlsVisibilityChange={setControlsVisible}
+              chatAccessory={
+                <button
+                  ref={chatButtonRef}
+                  className={`relative size-12 rounded-full grid place-items-center text-white border border-white/20 shadow-lg transition-colors ${
+                    chatOpen ? 'bg-primary' : 'bg-white/10 hover:bg-white/15 backdrop-blur'
+                  }`}
+                  aria-label={chatOpen ? 'Hide chat' : unreadCount > 0 ? `${unreadCount} unread messages. Show chat` : 'Show chat'}
+                  onClick={() => setChatOpen((v) => !v)}
+                >
+                  <MessageSquare className="size-6" />
+                  {!chatOpen && unreadCount > 0 ? (
+                    <>
+                      <span aria-hidden className="absolute -top-1 -right-1 size-5 rounded-full bg-red-500/60 animate-ping" />
+                      <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 grid place-items-center rounded-full bg-red-500 text-white text-[10px] font-medium ring-2 ring-black/40">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    </>
+                  ) : null}
+                </button>
+              }
             />
           ) : (
-            <div className="w-full max-w-5xl mx-auto aspect-video grid place-items-center rounded-lg border border-dashed">
+            <div className="w-full max-w-5xl mx-auto aspect-video grid place-items-center rounded-lg border border-dashed bg-zinc-100">
               <div className="text-zinc-600 text-sm">Waiting for host to set a video…</div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Sidebar */}
-      <div className={`relative border-t md:border-t-0 md:border-l border-zinc-200 bg-white ${sidebarOpen ? 'block' : 'hidden'}`}>
-        <button
-          className="absolute top-3 right-3 z-10 px-3 py-1.5 text-xs rounded-md bg-zinc-100 hover:bg-zinc-200"
-          onClick={() => setSidebarOpen((s) => !s)}
-          aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-        >
-          {sidebarOpen ? 'Hide' : 'Show'}
-        </button>
-        <div className="sticky top-0 h-dvh p-4 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">Room {id}</h2>
-            <Link to="/" className="text-sm text-primary underline-offset-4 hover:underline">
-              Home
-            </Link>
+      {/* Top gradient & info overlay */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/75 to-transparent transition-opacity duration-200" style={{ opacity: controlsVisible ? 1 : 0 }} />
+      <div className={`absolute top-3 left-3 z-20 text-white/95 text-xs md:text-sm transition-opacity duration-200 max-w-[300px] ${controlsVisible ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="px-2 py-1 rounded bg-black/35 backdrop-blur-sm ring-1 ring-white/10 pointer-events-auto">
+          <div className="font-medium">Room {id}</div>
+          <div className="opacity-90">
+            <span className="text-white/70">Status:</span> {state ? (state.isPlaying ? 'Playing' : 'Paused') : 'Connecting…'}
           </div>
-
-          <div className="space-y-2 text-sm text-zinc-700">
-            <div>
-              <span className="text-zinc-500">Status:</span>{' '}
-              {state ? (
-                <>
-                  {state.isPlaying ? 'Playing' : 'Paused'} @ rate {state.playbackRate}
-                </>
-              ) : (
-                'Connecting…'
-              )}
+          {effectiveSrc ? (
+            <div className="truncate">
+              <span className="text-white/70">Source:</span>{' '}
+              <a className="underline" href={effectiveSrc} target="_blank" rel="noreferrer">
+                {effectiveSrc}
+              </a>
             </div>
-            <div>
-              <span className="text-zinc-500">Source:</span>{' '}
-              {effectiveSrc ? (
-                <a href={effectiveSrc} target="_blank" rel="noreferrer" className="text-primary underline break-all">
-                  {effectiveSrc}
-                </a>
-              ) : (
-                '—'
-              )}
+          ) : null}
+          {subtitleAvailable && derivedSubtitleUrl ? (
+            <div className="truncate">
+              <span className="text-white/70">Subtitle:</span>{' '}
+              <a className="underline" href={derivedSubtitleUrl} target="_blank" rel="noreferrer">
+                {derivedSubtitleUrl}
+              </a>
             </div>
-            {subtitleAvailable && derivedSubtitleUrl ? (
-              <div>
-                <span className="text-zinc-500">Subtitle:</span>{' '}
-                <a href={derivedSubtitleUrl} target="_blank" rel="noreferrer" className="text-primary underline break-all">
-                  {derivedSubtitleUrl}
-                </a>
-              </div>
-            ) : null}
-            <div>
-              <span className="text-zinc-500">Users ({users.length}):</span>
-              <div className="mt-1 space-y-1">
-                {users.map((u) => (
-                  <div key={u.id} className="flex items-center justify-between text-zinc-700">
-                    <span>{u.name}</span>
-                    <span className="text-xs text-zinc-500">{u.role}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* Subtitle controls removed: subtitles auto-derived from source path */}
-          </div>
-
-          {/* Future: chat, room controls, etc. */}
+          ) : null}
         </div>
       </div>
-      {/* Show button overlay when sidebar is hidden on md+ */}
-      {!sidebarOpen ? (
-        <button
-          className="hidden md:inline-flex absolute top-3 right-3 z-10 px-3 py-1.5 text-xs rounded-md bg-zinc-100 hover:bg-zinc-200 border border-zinc-200"
-          onClick={() => setSidebarOpen(true)}
-          aria-label="Show sidebar"
-        >
-          Show
-        </button>
+
+      {/* Debug (bottom-left to avoid chat overlap) */}
+      {debugEnabled && debug ? (
+        <div className="fixed bottom-3 left-3 text-xs bg-black/70 text-white rounded px-2 py-1 z-20">
+          <div>drift: {debug.drift.toFixed(3)}s</div>
+          <div>rtt: {debug.rtt}ms</div>
+          <div>skew: {debug.skew.toFixed(1)}ms</div>
+        </div>
       ) : null}
+
+      {/* Floating chat widget */}
+      {chatOpen ? (
+        <div
+          ref={chatPopupRef}
+          className="absolute bottom-20 right-3 z-30 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg bg-zinc-950/85 text-white backdrop-blur-sm p-2"
+        >
+          <ChatPanel
+            myId={myId}
+            messages={messages}
+            onSend={(text) => {
+              const s = socketRef.current
+              if (!s) return
+              s.emit('chat:send', { text })
+            }}
+          />
+        </div>
+      ) : null}
+      {/* Fallback for chat button when not provided by Player (shouldn't happen) */}
+      <div className="absolute bottom-3 right-3 z-20 pointer-events-none">
+        <div className="pointer-events-auto" />
+      </div>
     </div>
   )
 }
+
+// Lightweight chat panel, bounded history and minimal re-renders
+function ChatPanel({
+  myId,
+  messages,
+  onSend,
+}: {
+  myId: string
+  messages: ChatMessage[]
+  onSend: (text: string) => void
+}) {
+  const [draft, setDraft] = useState('')
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const pinnedToBottomRef = useRef(true)
+
+  const scrollToBottom = () => {
+    const el = listRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }
+
+  const handleScroll = () => {
+    const el = listRef.current
+    if (!el) return
+    const threshold = 24
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold
+    pinnedToBottomRef.current = atBottom
+  }
+
+  useEffect(() => {
+    if (pinnedToBottomRef.current) {
+      requestAnimationFrame(scrollToBottom)
+    }
+  }, [messages])
+
+  const send = useCallback(() => {
+    const text = draft.trim()
+    if (!text) return
+    onSend(text)
+    setDraft('')
+  }, [draft, onSend])
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md flex-1">
+      <div
+        ref={listRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-2 space-y-2 bg-zinc-900/40 rounded max-h-[200px]"
+      >
+        {messages.map((m) => (
+          <MessageRow key={m.id} self={m.userId === myId} name={m.name} text={m.text} ts={m.ts} />
+        ))}
+      </div>
+      <div className="p-2 pt-0 flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              send()
+            }
+          }}
+          placeholder="Message…"
+          className="flex-1 h-9 px-3 rounded-md bg-zinc-900/60 text-white placeholder:text-zinc-400 outline-none ring-1 ring-white/10 focus:ring-white/20"
+        />
+        <Button size="sm" onClick={send} disabled={!draft.trim()} className="bg-white/10 hover:bg-white/15 text-white ring-1 ring-white/10">
+          Send
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+const MessageRow = memo(function MessageRow({
+  self,
+  name,
+  text,
+  ts,
+}: {
+  self: boolean
+  name: string
+  text: string
+  ts: number
+}) {
+  // light time formatting to avoid heavy Intl on each render
+  const d = new Date(ts)
+  const hh = d.getHours().toString().padStart(2, '0')
+  const mm = d.getMinutes().toString().padStart(2, '0')
+  const time = `${hh}:${mm}`
+  return (
+    <div className={`flex ${self ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[80%] rounded-md px-2.5 py-1.5 text-sm ${
+          self ? 'bg-white/15 text-white ring-1 ring-white/10' : 'bg-zinc-800/70 text-white'
+        }`}
+      >
+        <div className="flex items-center gap-2 mb-0.5 text-[10px] opacity-80">
+          <span className="font-medium truncate max-w-40">{self ? 'You' : name}</span>
+          <span>{time}</span>
+        </div>
+        <div className="whitespace-pre-wrap break-words">{text}</div>
+      </div>
+    </div>
+  )
+})
 

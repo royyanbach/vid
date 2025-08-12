@@ -13,6 +13,14 @@ type RoomState = {
 
 type PresenceUser = { id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }
 
+type ChatMessage = {
+  id: string
+  userId: string
+  name: string
+  ts: number
+  text: string
+}
+
 type Room = {
   state: RoomState
   users: Map<string, PresenceUser>
@@ -72,6 +80,7 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
   let joinedRoomId: string | null = null
   let user: PresenceUser | null = null
+  let lastMessageAt = 0
 
   socket.on('join', (payload: { roomId: string; name?: string; asHost?: boolean; src?: string }) => {
     const { roomId, name, asHost, src } = payload || ({} as any)
@@ -100,6 +109,7 @@ io.on('connection', (socket) => {
         io.to(roomId).emit('state', room.state)
       }, 2000)
     }
+
   })
 
   socket.on('subtitles', (payload: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => {
@@ -179,6 +189,31 @@ io.on('connection', (socket) => {
 
   socket.on('ping', (payload: { t0: number }) => {
     socket.emit('pong', { t0: payload?.t0, t1: Date.now() })
+  })
+
+  // Chat: minimal, bounded history, simple rate limiting
+  socket.on('chat:send', (payload: { text: string }) => {
+    if (!joinedRoomId) return
+    const room = getOrCreateRoom(joinedRoomId)
+    const sender = user || room.users.get(socket.id)
+    if (!sender) return
+    const now = Date.now()
+    // Simple flood control: at most ~3 msgs/sec per socket
+    if (now - lastMessageAt < 300) return
+    lastMessageAt = now
+
+    const raw = (payload?.text || '').trim()
+    if (!raw) return
+    // Normalize and bound length
+    const text = raw.slice(0, 400)
+    const msg: ChatMessage = {
+      id: `${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      userId: sender.id,
+      name: sender.name,
+      ts: now,
+      text,
+    }
+    io.to(joinedRoomId).emit('chat', msg)
   })
 
   socket.on('disconnect', () => {
