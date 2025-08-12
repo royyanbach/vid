@@ -19,6 +19,28 @@ function formatTime(totalSeconds: number): string {
     : `${minutes}:${two(seconds)}`
 }
 
+async function loadMpegtsLibrary(): Promise<any | null> {
+  try {
+    // Prefer local dependency if available
+    // Use vite-ignore so the dev server/build doesn't try to pre-bundle or resolve it at compile time
+    const mod: any = await import(/* @vite-ignore */ 'mpegts.js')
+    return mod?.default ?? mod
+  } catch {
+    // Fallback to CDN UMD build (assigns window.mpegts)
+    if (typeof window === 'undefined') return null
+    if ((window as any).mpegts) return (window as any).mpegts
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js'
+      script.async = true
+      script.onload = () => resolve()
+      script.onerror = () => reject(new Error('Failed to load mpegts.js'))
+      document.head.appendChild(script)
+    })
+    return (window as any).mpegts ?? null
+  }
+}
+
 export default function Player({
   src,
   poster,
@@ -36,6 +58,7 @@ export default function Player({
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const mpegtsRef = useRef<any | null>(null)
   const lastTimeUpdateRef = useRef(0)
 
   const [isPlaying, setIsPlaying] = useState(false)
@@ -45,7 +68,7 @@ export default function Player({
   const [duration, setDuration] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  // Load HLS source
+  // Load media source
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -53,17 +76,59 @@ export default function Player({
     setErrorMessage(null)
 
     const isHlsSource = /\.m3u8($|\?)/i.test(defaultSrc)
-    if (!isHlsSource) {
-      // MP4 or other progressive source: load directly
-      video.src = defaultSrc
-      video.load()
-    } else {
-      // HLS source: prefer native first
+    const isTsSource = /\.ts($|\?)/i.test(defaultSrc)
+
+    ;(async () => {
+      // Clean up any previous instances before loading a new one
+      if (hlsRef.current) {
+        hlsRef.current.destroy()
+        hlsRef.current = null
+      }
+      if (mpegtsRef.current) {
+        try {
+          mpegtsRef.current.detachMediaElement()
+        } catch {}
+        try {
+          mpegtsRef.current.destroy()
+        } catch {}
+        mpegtsRef.current = null
+      }
+
+      if (isTsSource) {
+        try {
+          const mpegts = await loadMpegtsLibrary()
+          if (mpegts && mpegts.isSupported?.()) {
+            const player = mpegts.createPlayer({
+              type: 'mpegts',
+              url: defaultSrc,
+            })
+            mpegtsRef.current = player
+            player.attachMediaElement(video)
+            player.load()
+          } else {
+            setErrorMessage('MPEG-TS is not supported in this browser')
+          }
+        } catch (err) {
+          setErrorMessage('Failed to initialize MPEG-TS playback')
+        }
+        return
+      }
+
+      if (!isHlsSource) {
+        video.src = defaultSrc
+        video.load()
+        return
+      }
+
+      // HLS: prefer native first
       const canUseNative = video.canPlayType('application/vnd.apple.mpegurl')
       if (canUseNative) {
         video.src = defaultSrc
         video.load()
-      } else if (Hls.isSupported()) {
+        return
+      }
+
+      if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
           backBufferLength: 90,
@@ -81,15 +146,25 @@ export default function Player({
             setErrorMessage('Failed to load video stream. Please check the URL or CORS settings.')
           }
         })
-      } else {
-        setErrorMessage('HLS is not supported in this browser')
+        return
       }
-    }
+
+      setErrorMessage('HLS is not supported in this browser')
+    })()
 
     return () => {
       if (hlsRef.current) {
         hlsRef.current.destroy()
         hlsRef.current = null
+      }
+      if (mpegtsRef.current) {
+        try {
+          mpegtsRef.current.detachMediaElement()
+        } catch {}
+        try {
+          mpegtsRef.current.destroy()
+        } catch {}
+        mpegtsRef.current = null
       }
     }
   }, [defaultSrc])
