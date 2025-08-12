@@ -1,5 +1,18 @@
 import Hls from 'hls.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Play,
+  Pause,
+  Volume2,
+  Volume1,
+  VolumeX,
+  SkipBack,
+  SkipForward,
+  PictureInPicture,
+  Maximize,
+  Minimize,
+  Captions,
+} from 'lucide-react'
 
 type PlayerProps = {
   src?: string
@@ -61,6 +74,7 @@ export default function Player({
   const hlsRef = useRef<Hls | null>(null)
   const mpegtsRef = useRef<any | null>(null)
   const lastTimeUpdateRef = useRef(0)
+  const hideControlsTimerRef = useRef<number | null>(null)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(mutedByDefault)
@@ -68,6 +82,12 @@ export default function Player({
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [areControlsVisible, setAreControlsVisible] = useState(true)
+  const [isControlsHovered, setIsControlsHovered] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [areCaptionsVisible, setAreCaptionsVisible] = useState(true)
+  const cueOriginalLineRef = useRef<WeakMap<any, any>>(new WeakMap())
+  const HIDE_DELAY_MS = 500
 
   // Derive a default subtitle from the same directory: /sub.vtt
   const effectiveSubtitles = useMemo(() => {
@@ -244,7 +264,7 @@ export default function Player({
     }
   }, [isMuted, volume, startTime])
 
-  // Auto-enable first track after it gets attached; fails safe if not found
+  // Manage captions visibility (defaults to on). Re-applies when tracks attach.
   useEffect(() => {
     const apply = () => {
       const video = videoRef.current
@@ -256,13 +276,49 @@ export default function Player({
           return
         }
         for (let i = 0; i < tracks.length; i++) tracks[i].mode = 'disabled'
-        if (tracks.length > 0) tracks[0].mode = 'showing'
+        if (areCaptionsVisible && tracks.length > 0) tracks[0].mode = 'showing'
       } catch {}
     }
-    // run shortly after render so <track> is in the DOM
     const id = window.setTimeout(apply, 0)
     return () => window.clearTimeout(id)
-  }, [effectiveSubtitles, defaultSrc])
+  }, [effectiveSubtitles, defaultSrc, areCaptionsVisible])
+
+  const adjustCueLines = (offsetActive: boolean) => {
+    const video = videoRef.current
+    if (!video) return
+    try {
+      const tracks = video.textTracks
+      if (!tracks || tracks.length === 0) return
+      for (let i = 0; i < tracks.length; i++) {
+        const cues = tracks[i].cues
+        if (!cues) continue
+        for (let j = 0; j < cues.length; j++) {
+          const cue: any = cues[j]
+          if (!cue) continue
+          if (offsetActive) {
+            if (!cueOriginalLineRef.current.has(cue)) cueOriginalLineRef.current.set(cue, cue.line)
+            try {
+              cue.line = -6 // raise about 6 lines above the bottom to clear the panel
+            } catch {}
+          } else {
+            if (cueOriginalLineRef.current.has(cue)) {
+              const orig = cueOriginalLineRef.current.get(cue)
+              try {
+                cue.line = orig ?? 'auto'
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Reposition captions above the control panel when it is visible
+  useEffect(() => {
+    // slight delay to ensure cues are available
+    const id = window.setTimeout(() => adjustCueLines(areControlsVisible), 0)
+    return () => window.clearTimeout(id)
+  }, [areControlsVisible, effectiveSubtitles, defaultSrc])
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -338,19 +394,87 @@ export default function Player({
     }
   }
 
-  const enterFullscreen = async () => {
+  const toggleFullscreen = async () => {
     const container = videoRef.current?.parentElement
     if (!container) return
     const anyEl = container as any
     try {
-      if (anyEl.requestFullscreen) await anyEl.requestFullscreen()
-      else if (anyEl.webkitRequestFullscreen) await anyEl.webkitRequestFullscreen()
+      if (!document.fullscreenElement) {
+        if (anyEl.requestFullscreen) await anyEl.requestFullscreen()
+        else if (anyEl.webkitRequestFullscreen) await anyEl.webkitRequestFullscreen()
+      } else {
+        if (document.exitFullscreen) await document.exitFullscreen()
+        else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen()
+      }
     } catch {}
+  }
+
+  // Track fullscreen state
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement))
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  const clearHideTimer = () => {
+    if (hideControlsTimerRef.current) {
+      window.clearTimeout(hideControlsTimerRef.current)
+      hideControlsTimerRef.current = null
+    }
+  }
+
+  const scheduleHide = () => {
+    clearHideTimer()
+    if (!isPlaying || isControlsHovered) return
+    hideControlsTimerRef.current = window.setTimeout(() => {
+      setAreControlsVisible(false)
+    }, HIDE_DELAY_MS)
+  }
+
+  // Keep controls visible when not playing; schedule hide when playback starts
+  useEffect(() => {
+    if (!isPlaying) {
+      setAreControlsVisible(true)
+      clearHideTimer()
+    } else {
+      scheduleHide()
+    }
+    return () => clearHideTimer()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying])
+
+  const revealControls = () => {
+    setAreControlsVisible(true)
+    if (hideControlsTimerRef.current) {
+      window.clearTimeout(hideControlsTimerRef.current)
+      hideControlsTimerRef.current = null
+    }
+  }
+
+  const handleContainerMouseMove = () => {
+    revealControls()
+    scheduleHide()
+  }
+
+  const toggleCaptions = () => setAreCaptionsVisible((v) => !v)
+
+  const volumeIcon = () => {
+    if (isMuted || volume === 0) return <VolumeX className="size-5" />
+    if (volume < 0.5) return <Volume1 className="size-5" />
+    return <Volume2 className="size-5" />
   }
 
   return (
     <div className="w-full max-w-5xl mx-auto rounded-lg overflow-hidden bg-black/95 shadow-lg">
-      <div className="relative aspect-video bg-black">
+      <div
+        className={`relative aspect-video bg-black ${isPlaying && !areControlsVisible ? 'cursor-none' : ''}`}
+        onMouseMove={handleContainerMouseMove}
+        onDoubleClick={toggleFullscreen}
+        onClick={() => {
+          // clicking the surface toggles play when controls are hidden
+          if (!areControlsVisible) togglePlay()
+        }}
+      >
         <video
           ref={videoRef}
           className="size-full"
@@ -359,6 +483,10 @@ export default function Player({
           controls={false}
           preload="metadata"
           crossOrigin="anonymous"
+          onClick={(e) => {
+            // prevent video from stopping event propagation above when controls are visible
+            if (areControlsVisible) e.stopPropagation()
+          }}
         >
           {effectiveSubtitles.map((t, i) => (
             // Browsers only support WebVTT natively. Ensure your subtitle files are .vtt
@@ -383,80 +511,121 @@ export default function Player({
           </div>
         ) : null}
 
-
-      </div>
-
-      {/* Controls */}
-      <div className="grid gap-3 p-3 text-white bg-gradient-to-b from-zinc-900 to-zinc-950">
-        <div className="flex items-center gap-3">
+        {/* Center Play/Pause overlay */}
+        {!isPlaying ? (
           <button
-            className="px-3 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
-            onClick={togglePlay}
+            className="absolute inset-0 m-auto size-16 rounded-full bg-white/10 ring-1 ring-white/20 backdrop-blur-sm text-white flex items-center justify-center hover:bg-white/15 transition"
+            onClick={(e) => {
+              e.stopPropagation()
+              togglePlay()
+            }}
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
-            {isPlaying ? 'Pause' : 'Play'}
+            {isPlaying ? <Pause className="size-7" /> : <Play className="size-7" />}
           </button>
+        ) : null}
 
-          <button
-            className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700"
-            onClick={() => handleSeek(Math.max(0, current - 10))}
-          >
-            -10s
-          </button>
-          <button
-            className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700"
-            onClick={() => handleSeek(Math.min(duration || current + 10, current + 10))}
-          >
-            +10s
-          </button>
+        {/* Top gradient for subtle polish */}
+        <div
+          className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/60 to-transparent transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0'}`}
+        />
 
-          <button
-            className="ml-auto px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700"
-            onClick={enterPip}
-          >
-            PiP
-          </button>
-          <button
-            className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700"
-            onClick={enterFullscreen}
-          >
-            Fullscreen
-          </button>
-        </div>
+        {/* Bottom Controls Overlay */}
+        <div
+          className={`absolute inset-x-0 bottom-0 p-3 text-white transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0'}`}
+          onMouseEnter={() => setIsControlsHovered(true)}
+          onMouseLeave={() => setIsControlsHovered(false)}
+        >
+          <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2">
+            {/* Seek bar */}
+            <div className="flex items-center gap-3 px-2">
+              <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(current)}</span>
+              <input
+                type="range"
+                min={0}
+                max={duration || 0}
+                step={0.05}
+                value={isFinite(current) ? current : 0}
+                onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                onInput={revealControls}
+                className="flex-1 accent-primary h-1.5 rounded-full bg-white/20"
+                aria-label="Seek"
+              />
+              <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(duration)}</span>
+            </div>
 
-        <div className="flex items-center gap-3">
-          <span className="tabular-nums text-xs min-w-12 text-zinc-300">{formatTime(current)}</span>
-          <input
-            type="range"
-            min={0}
-            max={duration || 0}
-            step={0.05}
-            value={isFinite(current) ? current : 0}
-            onChange={(e) => handleSeek(parseFloat(e.target.value))}
-            className="flex-1 accent-primary h-1.5 rounded-full bg-zinc-800"
-            aria-label="Seek"
-          />
-          <span className="tabular-nums text-xs min-w-12 text-zinc-300">{formatTime(duration)}</span>
-        </div>
+            {/* Buttons Row */}
+            <div className="mt-2 flex items-center gap-2 px-1">
+              <button
+                className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                onClick={togglePlay}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? <Pause className="size-5" /> : <Play className="size-5" />}
+              </button>
+              <button
+                className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                onClick={() => handleSeek(Math.max(0, current - 10))}
+                aria-label="Seek backward 10 seconds"
+              >
+                <SkipBack className="size-5" />
+              </button>
+              <button
+                className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                onClick={() => handleSeek(Math.min(duration || current + 10, current + 10))}
+                aria-label="Seek forward 10 seconds"
+              >
+                <SkipForward className="size-5" />
+              </button>
 
-        <div className="flex items-center gap-3">
-          <button
-            className="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700"
-            onClick={handleMuteToggle}
-          >
-            {isMuted || volume === 0 ? 'Unmute' : 'Mute'}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(e) => handleVolume(parseFloat(e.target.value))}
-            className="w-40 accent-primary h-1.5 rounded-full bg-zinc-800"
-            aria-label="Volume"
-          />
+              {/* Volume */}
+              <div className="ml-1 flex items-center gap-2">
+                <button
+                  className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                  onClick={handleMuteToggle}
+                  aria-label={isMuted ? 'Unmute' : 'Mute'}
+                >
+                  {volumeIcon()}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={volume}
+                  onChange={(e) => handleVolume(parseFloat(e.target.value))}
+                  onInput={revealControls}
+                  className="w-28 accent-primary h-1.5 rounded-full bg-white/20"
+                  aria-label="Volume"
+                />
+              </div>
 
+              {/* Right side actions */}
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  className={`size-8 grid place-items-center rounded ring-1 ring-white/10 ${areCaptionsVisible ? 'bg-white/20 hover:bg-white/25' : 'bg-white/10 hover:bg-white/15'}`}
+                  onClick={toggleCaptions}
+                  aria-label="Toggle captions"
+                >
+                  <Captions className="size-5" />
+                </button>
+                <button
+                  className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                  onClick={enterPip}
+                  aria-label="Picture in Picture"
+                >
+                  <PictureInPicture className="size-5" />
+                </button>
+                <button
+                  className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
+                  onClick={toggleFullscreen}
+                  aria-label={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                >
+                  {isFullscreen ? <Minimize className="size-5" /> : <Maximize className="size-5" />}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

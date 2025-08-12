@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useParams } from '@tanstack/react-router'
 import Player from '@/components/Player'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type ClientSocket, type ServerState, computeTargetTime, connectSocket } from '@/lib/ws'
 
 export const Route = createFileRoute('/room/$id')({
@@ -19,6 +19,33 @@ function RoomPage() {
   const [myId, setMyId] = useState<string>('')
   const isHost = useMemo(() => users.some((u) => u.id === myId && u.role === 'host'), [users, myId])
   const piRef = useRef({ integral: 0, lastTime: 0 })
+  const lastPlayReqRef = useRef(0)
+  const lastPauseReqRef = useRef(0)
+  const lastSeekAtRef = useRef(0)
+
+  const ensurePlaybackState = useCallback((desiredPlaying: boolean) => {
+    const video = videoRef.current
+    const api = (video as any)?._playerApi as
+      | { play: () => void; pause: () => void }
+      | undefined
+    if (!video || !api) return
+    if (!video.currentSrc) return
+    // avoid thrash around seeks or when not ready
+    if (video.seeking || video.readyState < 2) return
+    const now = performance.now()
+    if (desiredPlaying) {
+      if (!video.paused) return
+      if (now - lastSeekAtRef.current < 250) return
+      if (now - lastPlayReqRef.current < 800) return
+      lastPlayReqRef.current = now
+      void api.play()
+    } else {
+      if (video.paused) return
+      if (now - lastPauseReqRef.current < 300) return
+      lastPauseReqRef.current = now
+      api.pause()
+    }
+  }, [])
 
   const wsUrl = useMemo(() => (import.meta.env.VITE_WS_URL as string) || 'wss://playground.royyanba.ch', [])
   const wsBasePath = useMemo(() => (import.meta.env.VITE_WS_BASE_PATH as string) || '/vid-ws', [])
@@ -35,6 +62,7 @@ function RoomPage() {
     socketRef.current = socket
 
     socket.on('connect', () => setMyId(socket.id || ''))
+
     const applyStateToPlayer = (s: ServerState) => {
       if (isHost) return
       const video = videoRef.current
@@ -49,10 +77,10 @@ function RoomPage() {
       if (Math.abs(drift) > 1.5) {
         api.seek(target)
         piRef.current.integral = 0
+        lastSeekAtRef.current = performance.now()
       }
       // Align play/pause immediately
-      if (s.isPlaying && (video as any).paused) api.play()
-      if (!s.isPlaying && !(video as any).paused) api.pause()
+      ensurePlaybackState(s.isPlaying)
       // Sync baseline playbackRate (PI loop will micro-adjust)
       try {
         if (Math.abs((video as any).playbackRate - (s.playbackRate || 1)) > 0.001) {
@@ -128,6 +156,7 @@ function RoomPage() {
           if (abs > 1.5) {
             api.seek(target)
             piRef.current.integral = 0
+            lastSeekAtRef.current = performance.now()
           } else {
             // PI controller around baseline rate
             const baseline = s.playbackRate || 1
@@ -150,11 +179,7 @@ function RoomPage() {
               api.setRate(nextRate)
             }
           }
-          if (s.isPlaying && (video as any).paused) {
-            void api.play()
-          } else if (!s.isPlaying && !(video as any).paused) {
-            api.pause()
-          }
+          ensurePlaybackState(s.isPlaying)
         }
         rafId = (video as any).requestVideoFrameCallback(tick)
       }
@@ -177,6 +202,7 @@ function RoomPage() {
         if (abs > 1.5) {
           api.seek(target)
           piRef.current.integral = 0
+          lastSeekAtRef.current = performance.now()
         } else {
           const baseline = s.playbackRate || 1
           const now = performance.now()
@@ -196,11 +222,7 @@ function RoomPage() {
             api.setRate(nextRate)
           }
         }
-        if (s.isPlaying && (video as any).paused) {
-          void api.play()
-        } else if (!s.isPlaying && !(video as any).paused) {
-          api.pause()
-        }
+        ensurePlaybackState(s.isPlaying)
       }, 500)
       return () => {
         clearInterval(iv)
