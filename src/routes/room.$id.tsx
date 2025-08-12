@@ -20,6 +20,7 @@ function RoomPage() {
   const socketRef = useRef<ClientSocket | null>(null)
   const skewRef = useRef(0)
   const skewEmaRef = useRef(0)
+  const rttRef = useRef(200)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [myId, setMyId] = useState<string>('')
   const isHost = useMemo(() => users.some((u) => u.id === myId && u.role === 'host'), [users, myId])
@@ -31,6 +32,7 @@ function RoomPage() {
   const [controlsVisible, setControlsVisible] = useState(true)
   const chatButtonRef = useRef<HTMLButtonElement | null>(null)
   const chatPopupRef = useRef<HTMLDivElement | null>(null)
+  const joinAutoplayArmedRef = useRef(false)
 
   const ensurePlaybackState = useCallback((desiredPlaying: boolean) => {
     const video = videoRef.current
@@ -42,14 +44,19 @@ function RoomPage() {
     // avoid thrash around seeks or when not ready
     if (video.seeking || video.readyState < 2) return
     const now = performance.now()
+    const windowMs = Math.max(300, Math.min(1600, rttRef.current * 2 + 200))
     if (desiredPlaying) {
       if (!video.paused) return
       if (now - lastSeekAtRef.current < 250) return
-      if (now - lastPlayReqRef.current < 800) return
+      // If we just locally paused, don't auto-play immediately
+      if (now - lastPauseReqRef.current < windowMs) return
+      if (now - lastPlayReqRef.current < windowMs) return
       lastPlayReqRef.current = now
       void api.play()
     } else {
       if (video.paused) return
+      // If we just locally played, don't auto-pause immediately
+      if (now - lastPlayReqRef.current < windowMs) return
       if (now - lastPauseReqRef.current < 300) return
       lastPauseReqRef.current = now
       api.pause()
@@ -83,13 +90,16 @@ function RoomPage() {
       const target = computeTargetTime(s, now)
       const current = api.getCurrentTime()
       const drift = current - target
-      if (Math.abs(drift) > 1.5) {
+      const seekThreshold = Math.max(1.2, rttRef.current / 250)
+      if (Math.abs(drift) > seekThreshold) {
         api.seek(target)
         piRef.current.integral = 0
         lastSeekAtRef.current = performance.now()
       }
       // Align play/pause immediately
       ensurePlaybackState(s.isPlaying)
+      // If joining into a playing room, arm autoplay until media is ready
+      if (s.isPlaying) joinAutoplayArmedRef.current = true
       // Sync baseline playbackRate (PI loop will micro-adjust)
       try {
         if (Math.abs((video as any).playbackRate - (s.playbackRate || 1)) > 0.001) {
@@ -102,11 +112,28 @@ function RoomPage() {
       stateRef.current = s
       setState({ ...s })
       applyStateToPlayer(s)
+      // If room is playing, attempt immediate play when we first receive state
+      if (!isHost && s.isPlaying) {
+        const video = videoRef.current
+        const api = (video as any)?._playerApi
+        if (video && api && (video as any).paused) {
+          lastPlayReqRef.current = performance.now()
+          void api.play()
+        }
+      }
     })
     socket.on('resync', (s) => {
       stateRef.current = s
       setState({ ...s })
       applyStateToPlayer(s)
+      if (!isHost && s.isPlaying) {
+        const video = videoRef.current
+        const api = (video as any)?._playerApi
+        if (video && api && (video as any).paused) {
+          lastPlayReqRef.current = performance.now()
+          void api.play()
+        }
+      }
     })
     socket.on('presence', (p) => setUsers(p.users))
     // chat wires
@@ -130,6 +157,7 @@ function RoomPage() {
     socket.on('pong', ({ t0, t1 }) => {
       const t2 = Date.now()
       const rtt = t2 - t0
+      rttRef.current = rtt
       const serverTimeAtRecv = t1 + rtt / 2
       const measuredSkew = serverTimeAtRecv - t2
       const alpha = 0.2
@@ -147,6 +175,33 @@ function RoomPage() {
       socket.disconnect()
     }
   }, [id, wsUrl, wsBasePath])
+
+  // Autoplay on first readiness if room is playing
+  useEffect(() => {
+    if (isHost) return
+    const video = videoRef.current
+    if (!video) return
+    const tryAuto = () => {
+      if (!joinAutoplayArmedRef.current) return
+      const s = stateRef.current
+      if (!s || !s.isPlaying) return
+      if (video.readyState >= 2 && (video as any).paused) {
+        joinAutoplayArmedRef.current = false
+        lastPlayReqRef.current = performance.now()
+        void (video as any)._playerApi?.play()
+      }
+    }
+    const onLoaded = () => tryAuto()
+    const onCanPlay = () => tryAuto()
+    video.addEventListener('loadedmetadata', onLoaded)
+    video.addEventListener('canplay', onCanPlay)
+    const iv = window.setInterval(tryAuto, 400)
+    return () => {
+      video.removeEventListener('loadedmetadata', onLoaded)
+      video.removeEventListener('canplay', onCanPlay)
+      window.clearInterval(iv)
+    }
+  }, [isHost])
 
   // keep ref in sync to avoid stale closure in socket handler
   useEffect(() => {
@@ -180,7 +235,8 @@ function RoomPage() {
           const current = api.getCurrentTime()
           const drift = current - target
           const abs = Math.abs(drift)
-          if (abs > 1.5) {
+          const seekThreshold = Math.max(1.2, rttRef.current / 250)
+          if (abs > seekThreshold) {
             api.seek(target)
             piRef.current.integral = 0
             lastSeekAtRef.current = performance.now()
@@ -226,7 +282,8 @@ function RoomPage() {
         const current = api.getCurrentTime()
         const drift = current - target
         const abs = Math.abs(drift)
-        if (abs > 1.5) {
+        const seekThreshold = Math.max(1.2, rttRef.current / 250)
+        if (abs > seekThreshold) {
           api.seek(target)
           piRef.current.integral = 0
           lastSeekAtRef.current = performance.now()
@@ -301,10 +358,30 @@ function RoomPage() {
     if (!video || !socket) return
     if (!isHost) return
 
-    const handlePlay = () => socket.emit('play')
-    const handlePause = () => socket.emit('pause', { atMediaTime: video.currentTime || 0 })
-    const handleSeeked = () => socket.emit('seek', { toMediaTime: video.currentTime || 0 })
-    const handleRate = () => socket.emit('rate', { playbackRate: video.playbackRate || 1 })
+    const handlePlay = () => {
+      lastPlayReqRef.current = performance.now()
+      socket.emit('play')
+    }
+    const handlePause = () => {
+      lastPauseReqRef.current = performance.now()
+      socket.emit('pause', { atMediaTime: video.currentTime || 0 })
+    }
+    // debounce seeked and ratechange to avoid bursts
+    let seekTimer: number | null = null
+    let rateTimer: number | null = null
+    const handleSeeked = () => {
+      if (seekTimer) window.clearTimeout(seekTimer)
+      seekTimer = window.setTimeout(() => {
+        lastSeekAtRef.current = performance.now()
+        socket.emit('seek', { toMediaTime: video.currentTime || 0 })
+      }, 120)
+    }
+    const handleRate = () => {
+      if (rateTimer) window.clearTimeout(rateTimer)
+      rateTimer = window.setTimeout(() => {
+        socket.emit('rate', { playbackRate: video.playbackRate || 1 })
+      }, 150)
+    }
 
     video.addEventListener('play', handlePlay)
     video.addEventListener('pause', handlePause)
@@ -316,6 +393,8 @@ function RoomPage() {
       video.removeEventListener('pause', handlePause)
       video.removeEventListener('seeked', handleSeeked)
       video.removeEventListener('ratechange', handleRate)
+      if (seekTimer) window.clearTimeout(seekTimer)
+      if (rateTimer) window.clearTimeout(rateTimer)
     }
   }, [isHost])
 
@@ -370,6 +449,7 @@ function RoomPage() {
               subtitles={effectiveSubtitles}
               fullBleed
               onControlsVisibilityChange={setControlsVisible}
+              canControl={isHost}
               chatAccessory={
                 <button
                   ref={chatButtonRef}

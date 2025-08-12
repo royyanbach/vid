@@ -26,6 +26,7 @@ type PlayerProps = {
     default?: boolean
   }>
   fullBleed?: boolean
+  canControl?: boolean
   onControlsVisibilityChange?: (visible: boolean) => void
   chatAccessory?: React.ReactNode
 }
@@ -64,6 +65,7 @@ export default function Player({
   startTime = 0,
   subtitles = [],
   fullBleed = false,
+  canControl = true,
   onControlsVisibilityChange,
   chatAccessory,
 }: PlayerProps) {
@@ -110,7 +112,7 @@ export default function Player({
     }
   }, [defaultSrc, subtitles])
 
-  console.log('effectiveSubtitles', effectiveSubtitles)
+  // console.debug('effectiveSubtitles', effectiveSubtitles)
 
   // No overlay renderer: keep behavior simple and fail-safe
 
@@ -120,6 +122,10 @@ export default function Player({
     if (!video) return
 
     setErrorMessage(null)
+    // Ensure muted is set before any autoplay attempts to satisfy browser policies
+    try {
+      video.muted = true
+    } catch {}
 
     const isHlsSource = /\.m3u8($|\?)/i.test(defaultSrc)
     const isTsSource = /\.ts($|\?)/i.test(defaultSrc)
@@ -334,6 +340,7 @@ export default function Player({
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
+    if (!canControl) return
     if (video.paused) {
       void video.play().catch(() => {
         setErrorMessage('Autoplay is blocked. Click play to start.')
@@ -373,6 +380,7 @@ export default function Player({
   const handleSeek = (value: number) => {
     const video = videoRef.current
     if (!video || !isFinite(value)) return
+    if (!canControl) return
     video.currentTime = value
   }
 
@@ -491,6 +499,7 @@ export default function Player({
           className={fullBleed ? 'absolute inset-0 w-full h-full object-contain bg-black' : 'size-full'}
           poster={poster}
           playsInline
+          autoPlay
           controls={false}
           preload="metadata"
           crossOrigin="anonymous"
@@ -523,12 +532,12 @@ export default function Player({
         ) : null}
 
         {/* Center Play/Pause overlay */}
-        {!isPlaying ? (
+        {!isPlaying && canControl ? (
           <button
             className="absolute inset-0 m-auto size-16 rounded-full bg-white/10 ring-1 ring-white/20 backdrop-blur-sm text-white flex items-center justify-center hover:bg-white/15 transition"
             onClick={(e) => {
               e.stopPropagation()
-              togglePlay()
+              if (canControl) togglePlay()
             }}
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
@@ -553,43 +562,58 @@ export default function Player({
               {/* Seek bar */}
               <div className="flex items-center gap-3 px-2">
                 <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(current)}</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 0}
-                  step={0.05}
-                  value={isFinite(current) ? current : 0}
-                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  onInput={revealControls}
-                  className="flex-1 accent-primary h-1.5 rounded-full bg-white/20"
-                  aria-label="Seek"
-                />
+                {canControl ? (
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration || 0}
+                    step={0.05}
+                    value={isFinite(current) ? current : 0}
+                    onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                    onInput={revealControls}
+                    className="flex-1 accent-primary h-1.5 rounded-full bg-white/20"
+                    aria-label="Seek"
+                  />
+                ) : (
+                  <div className="flex-1 h-1.5 rounded-full bg-white/20 overflow-hidden" aria-label="Progress">
+                    <div
+                      className="h-full bg-primary"
+                      style={{ width: `${!duration || !isFinite(current) ? 0 : Math.max(0, Math.min(100, (current / duration) * 100))}%` }}
+                      aria-hidden
+                    />
+                  </div>
+                )}
                 <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(duration)}</span>
               </div>
 
               {/* Buttons Row */}
               <div className="mt-2 flex items-center gap-2 px-1">
+                {canControl ? (<>
                 <button
                   className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
                   onClick={togglePlay}
                   aria-label={isPlaying ? 'Pause' : 'Play'}
+                  disabled={!canControl}
                 >
                   {isPlaying ? <Pause className="size-5" /> : <Play className="size-5" />}
                 </button>
                 <button
                   className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                  onClick={() => handleSeek(Math.max(0, current - 10))}
+                  onClick={() => canControl && handleSeek(Math.max(0, current - 10))}
                   aria-label="Seek backward 10 seconds"
+                  disabled={!canControl}
                 >
                   <SkipBack className="size-5" />
                 </button>
                 <button
                   className="size-8 grid place-items-center rounded bg-white/10 hover:bg-white/15 ring-1 ring-white/10"
-                  onClick={() => handleSeek(Math.min(duration || current + 10, current + 10))}
+                  onClick={() => canControl && handleSeek(Math.min(duration || current + 10, current + 10))}
                   aria-label="Seek forward 10 seconds"
+                  disabled={!canControl}
                 >
                   <SkipForward className="size-5" />
                 </button>
+                </>) : null}
 
                 {/* Volume */}
                 <div className="ml-1 flex items-center gap-2">
