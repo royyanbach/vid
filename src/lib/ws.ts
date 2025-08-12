@@ -21,7 +21,7 @@ export type ClientSocket = Socket<
     error: (e: { code: string; message: string }) => void
   },
   {
-    join: (p: { roomId: string; name?: string; asHost?: boolean }) => void
+    join: (p: { roomId: string; name?: string; asHost?: boolean; src?: string }) => void
     play: () => void
     pause: (p?: { atMediaTime?: number }) => void
     seek: (p: { toMediaTime: number }) => void

@@ -72,8 +72,8 @@ io.on('connection', (socket) => {
   let joinedRoomId: string | null = null
   let user: PresenceUser | null = null
 
-  socket.on('join', (payload: { roomId: string; name?: string; asHost?: boolean }) => {
-    const { roomId, name, asHost } = payload || ({} as any)
+  socket.on('join', (payload: { roomId: string; name?: string; asHost?: boolean; src?: string }) => {
+    const { roomId, name, asHost, src } = payload || ({} as any)
     if (!roomId) return socket.emit('error', { code: 'bad_request', message: 'roomId required' })
 
     const room = getOrCreateRoom(roomId)
@@ -86,6 +86,10 @@ io.on('connection', (socket) => {
     user = { id: socket.id, name: name || `user-${socket.id.slice(0, 4)}`, role }
     room.users.set(socket.id, user)
 
+    // If this is the first host and a src was provided, set it on the room state
+    if (role === 'host' && src && typeof src === 'string') {
+      room.state.src = src
+    }
     socket.emit('state', room.state)
     io.to(roomId).emit('presence', { users: Array.from(room.users.values()) })
 

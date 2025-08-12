@@ -22,6 +22,13 @@ function RoomPage() {
 
   const wsUrl = useMemo(() => (import.meta.env.VITE_WS_URL as string) || 'wss://playground.royyanba.ch', [])
   const wsBasePath = useMemo(() => (import.meta.env.VITE_WS_BASE_PATH as string) || '/vid-ws', [])
+  const initialSrc = useMemo(() => {
+    try {
+      return localStorage.getItem(`room:${id}:src`) || undefined
+    } catch {
+      return undefined
+    }
+  }, [id])
 
   useEffect(() => {
     const socket = connectSocket({ baseUrl: wsUrl, basePath: wsBasePath, query: { roomId: id } })
@@ -82,7 +89,7 @@ function RoomPage() {
       ;(window as any).__lastRTT = rtt
     })
 
-    socket.emit('join', { roomId: id })
+    socket.emit('join', { roomId: id, src: initialSrc })
     const pingIv = setInterval(ping, 2000)
     ping()
 
@@ -247,44 +254,99 @@ function RoomPage() {
     }
   }, [isHost])
 
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const effectiveSrc = state?.src || initialSrc
+
   return (
-    <div className="p-4 md:p-8 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Room {id}</h1>
-        <Link to="/" className="text-sm text-primary underline-offset-4 hover:underline">
-          Back Home
-        </Link>
-      </div>
+    <div className={`h-dvh grid grid-cols-1 ${sidebarOpen ? 'md:grid-cols-[1fr_minmax(280px,360px)]' : 'md:grid-cols-1'}`}>
+      <div className="relative p-3 md:p-4 overflow-y-auto flex items-center justify-center bg-gray-100">
+        {debugEnabled && debug ? (
+          <div className="fixed bottom-3 right-3 text-xs bg-black/70 text-white rounded px-2 py-1 z-10">
+            <div>drift: {debug.drift.toFixed(3)}s</div>
+            <div>rtt: {debug.rtt}ms</div>
+            <div>skew: {debug.skew.toFixed(1)}ms</div>
+          </div>
+        ) : null}
 
-      {debugEnabled && debug ? (
-        <div className="fixed bottom-3 right-3 text-xs bg-black/70 text-white rounded px-2 py-1">
-          <div>drift: {debug.drift.toFixed(3)}s</div>
-          <div>rtt: {debug.rtt}ms</div>
-          <div>skew: {debug.skew.toFixed(1)}ms</div>
-        </div>
-      ) : null}
-
-      {/* Attach a ref to access the internal API via the video element handle */}
-      <div
-        ref={(el) => {
-          videoRef.current = (el?.querySelector('video') as HTMLVideoElement) || null
-        }}
-      >
-        <Player />
-      </div>
-
-      <div className="text-sm text-zinc-500">
-        {state ? (
-          <>
-            <div>
-              Status: {state.isPlaying ? 'Playing' : 'Paused'} @ rate {state.playbackRate}
+        <div
+          ref={(el) => {
+            videoRef.current = (el?.querySelector('video') as HTMLVideoElement) || null
+          }}
+        >
+          {effectiveSrc ? (
+            <Player src={effectiveSrc} />
+          ) : (
+            <div className="w-full max-w-5xl mx-auto aspect-video grid place-items-center rounded-lg border border-dashed">
+              <div className="text-zinc-600 text-sm">Waiting for host to set a video…</div>
             </div>
-            <div className="mt-1">Users: {users.map((u) => `${u.name}${u.role === 'host' ? ' (host)' : ''}`).join(', ')}</div>
-          </>
-        ) : (
-          'Connecting…'
-        )}
+          )}
+        </div>
       </div>
+
+      {/* Sidebar */}
+      <div className={`relative border-t md:border-t-0 md:border-l border-zinc-200 bg-white ${sidebarOpen ? 'block' : 'hidden'}`}>
+        <button
+          className="absolute top-3 right-3 z-10 px-3 py-1.5 text-xs rounded-md bg-zinc-100 hover:bg-zinc-200"
+          onClick={() => setSidebarOpen((s) => !s)}
+          aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+        >
+          {sidebarOpen ? 'Hide' : 'Show'}
+        </button>
+        <div className="sticky top-0 h-dvh p-4 overflow-y-auto">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold">Room {id}</h2>
+            <Link to="/" className="text-sm text-primary underline-offset-4 hover:underline">
+              Home
+            </Link>
+          </div>
+
+          <div className="space-y-2 text-sm text-zinc-700">
+            <div>
+              <span className="text-zinc-500">Status:</span>{' '}
+              {state ? (
+                <>
+                  {state.isPlaying ? 'Playing' : 'Paused'} @ rate {state.playbackRate}
+                </>
+              ) : (
+                'Connecting…'
+              )}
+            </div>
+            <div>
+              <span className="text-zinc-500">Source:</span>{' '}
+              {effectiveSrc ? (
+                <a href={effectiveSrc} target="_blank" rel="noreferrer" className="text-primary underline break-all">
+                  {effectiveSrc}
+                </a>
+              ) : (
+                '—'
+              )}
+            </div>
+            <div>
+              <span className="text-zinc-500">Users ({users.length}):</span>
+              <div className="mt-1 space-y-1">
+                {users.map((u) => (
+                  <div key={u.id} className="flex items-center justify-between text-zinc-700">
+                    <span>{u.name}</span>
+                    <span className="text-xs text-zinc-500">{u.role}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Future: chat, room controls, etc. */}
+        </div>
+      </div>
+      {/* Show button overlay when sidebar is hidden on md+ */}
+      {!sidebarOpen ? (
+        <button
+          className="hidden md:inline-flex absolute top-3 right-3 z-10 px-3 py-1.5 text-xs rounded-md bg-zinc-100 hover:bg-zinc-200 border border-zinc-200"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Show sidebar"
+        >
+          Show
+        </button>
+      ) : null}
     </div>
   )
 }
