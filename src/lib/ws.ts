@@ -6,6 +6,7 @@ export type ServerState = {
   baseServerTime: number
   playbackRate: number
   src?: string
+  subtitles?: Array<{ src: string; label: string; lang?: string; default?: boolean }>
 }
 
 export type Presence = {
@@ -28,6 +29,7 @@ export type ClientSocket = Socket<
     rate: (p: { playbackRate: number }) => void
     ready: (p: { ready: boolean }) => void
     ping: (p: { t0: number }) => void
+    subtitles: (p: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => void
   }
 >
 

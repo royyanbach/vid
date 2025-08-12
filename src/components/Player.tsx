@@ -6,6 +6,12 @@ type PlayerProps = {
   poster?: string
   mutedByDefault?: boolean
   startTime?: number
+  subtitles?: Array<{
+    src: string
+    label: string
+    lang?: string
+    default?: boolean
+  }>
 }
 
 function formatTime(totalSeconds: number): string {
@@ -40,6 +46,7 @@ export default function Player({
   poster,
   mutedByDefault = true,
   startTime = 0,
+  subtitles = [],
 }: PlayerProps) {
   const defaultSrc = useMemo(() => {
     return (
@@ -61,6 +68,25 @@ export default function Player({
   const [current, setCurrent] = useState(0)
   const [duration, setDuration] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  // Derive a default subtitle from the same directory: /sub.vtt
+  const effectiveSubtitles = useMemo(() => {
+    if (subtitles && subtitles.length > 0) return subtitles
+    try {
+      const u = new URL(defaultSrc, typeof window !== 'undefined' ? window.location.href : 'http://localhost')
+      const parts = u.pathname.split('/').filter(Boolean)
+      if (parts.length > 0) parts[parts.length - 1] = 'sub.vtt'
+      else parts.push('sub.vtt')
+      u.pathname = '/' + parts.join('/')
+      return [{ src: u.toString(), label: 'Subtitles', lang: 'en', default: true }]
+    } catch {
+      return []
+    }
+  }, [defaultSrc, subtitles])
+
+  console.log('effectiveSubtitles', effectiveSubtitles)
+
+  // No overlay renderer: keep behavior simple and fail-safe
 
   // Load media source
   useEffect(() => {
@@ -183,6 +209,11 @@ export default function Player({
           video.currentTime = Math.max(0, Math.min(startTime, video.duration || startTime))
         } catch {}
       }
+      // No-op: captions auto-enabled in a separate effect
+      try {
+        // touch textTracks to encourage initialization
+        void video.textTracks?.length
+      } catch {}
     }
     const onTimeUpdate = () => {
       const now = performance.now()
@@ -212,6 +243,26 @@ export default function Player({
       video.removeEventListener('error', onError)
     }
   }, [isMuted, volume, startTime])
+
+  // Auto-enable first track after it gets attached; fails safe if not found
+  useEffect(() => {
+    const apply = () => {
+      const video = videoRef.current
+      if (!video) return
+      try {
+        const tracks = video.textTracks
+        if (!tracks || tracks.length === 0) {
+          setTimeout(apply, 50)
+          return
+        }
+        for (let i = 0; i < tracks.length; i++) tracks[i].mode = 'disabled'
+        if (tracks.length > 0) tracks[0].mode = 'showing'
+      } catch {}
+    }
+    // run shortly after render so <track> is in the DOM
+    const id = window.setTimeout(apply, 0)
+    return () => window.clearTimeout(id)
+  }, [effectiveSubtitles, defaultSrc])
 
   const togglePlay = () => {
     const video = videoRef.current
@@ -307,7 +358,21 @@ export default function Player({
           playsInline
           controls={false}
           preload="metadata"
-        />
+          crossOrigin="anonymous"
+        >
+          {effectiveSubtitles.map((t, i) => (
+            // Browsers only support WebVTT natively. Ensure your subtitle files are .vtt
+            <track
+              // eslint-disable-next-line react/no-array-index-key
+              key={`${t.label}-${i}`}
+              kind="captions"
+              src={t.src}
+              label={t.label}
+              srcLang={t.lang || 'en'}
+              default={Boolean(t.default)}
+            />
+          ))}
+        </video>
 
         {errorMessage ? (
           <div className="absolute inset-0 flex items-center justify-center text-center p-6 bg-black/70 text-white">
@@ -317,6 +382,8 @@ export default function Player({
             </div>
           </div>
         ) : null}
+
+
       </div>
 
       {/* Controls */}
@@ -389,6 +456,7 @@ export default function Player({
             className="w-40 accent-primary h-1.5 rounded-full bg-zinc-800"
             aria-label="Volume"
           />
+
         </div>
       </div>
     </div>

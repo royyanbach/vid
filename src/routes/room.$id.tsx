@@ -256,6 +256,39 @@ function RoomPage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const effectiveSrc = state?.src || initialSrc
+  const effectiveSubtitles = (state?.subtitles && state.subtitles.length > 0)
+    ? state.subtitles
+    : []
+  const derivedSubtitleUrl = useMemo(() => {
+    if (!effectiveSrc) return null
+    try {
+      const u = new URL(effectiveSrc, typeof window !== 'undefined' ? window.location.href : 'http://localhost')
+      const parts = u.pathname.split('/').filter(Boolean)
+      if (parts.length > 0) parts[parts.length - 1] = 'sub.vtt'
+      else parts.push('sub.vtt')
+      u.pathname = '/' + parts.join('/')
+      return u.toString()
+    } catch {
+      return null
+    }
+  }, [effectiveSrc])
+  const [subtitleAvailable, setSubtitleAvailable] = useState<boolean>(false)
+  useEffect(() => {
+    let aborted = false
+    setSubtitleAvailable(false)
+    if (!derivedSubtitleUrl) return
+    ;(async () => {
+      try {
+        const res = await fetch(derivedSubtitleUrl, { method: 'GET', mode: 'cors', cache: 'no-store' })
+        if (!aborted) setSubtitleAvailable(res.ok)
+      } catch {
+        if (!aborted) setSubtitleAvailable(false)
+      }
+    })()
+    return () => {
+      aborted = true
+    }
+  }, [derivedSubtitleUrl])
 
   return (
     <div className={`h-dvh grid grid-cols-1 ${sidebarOpen ? 'md:grid-cols-[1fr_minmax(280px,360px)]' : 'md:grid-cols-1'}`}>
@@ -274,7 +307,10 @@ function RoomPage() {
           }}
         >
           {effectiveSrc ? (
-            <Player src={effectiveSrc} />
+            <Player
+              src={effectiveSrc}
+              subtitles={effectiveSubtitles}
+            />
           ) : (
             <div className="w-full max-w-5xl mx-auto aspect-video grid place-items-center rounded-lg border border-dashed">
               <div className="text-zinc-600 text-sm">Waiting for host to set a video…</div>
@@ -321,6 +357,14 @@ function RoomPage() {
                 '—'
               )}
             </div>
+            {subtitleAvailable && derivedSubtitleUrl ? (
+              <div>
+                <span className="text-zinc-500">Subtitle:</span>{' '}
+                <a href={derivedSubtitleUrl} target="_blank" rel="noreferrer" className="text-primary underline break-all">
+                  {derivedSubtitleUrl}
+                </a>
+              </div>
+            ) : null}
             <div>
               <span className="text-zinc-500">Users ({users.length}):</span>
               <div className="mt-1 space-y-1">
@@ -332,6 +376,7 @@ function RoomPage() {
                 ))}
               </div>
             </div>
+            {/* Subtitle controls removed: subtitles auto-derived from source path */}
           </div>
 
           {/* Future: chat, room controls, etc. */}

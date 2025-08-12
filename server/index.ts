@@ -8,6 +8,7 @@ type RoomState = {
   baseServerTime: number
   playbackRate: number
   src?: string
+  subtitles?: Array<{ src: string; label: string; lang?: string; default?: boolean }>
 }
 
 type PresenceUser = { id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }
@@ -99,6 +100,24 @@ io.on('connection', (socket) => {
         io.to(roomId).emit('state', room.state)
       }, 2000)
     }
+  })
+
+  socket.on('subtitles', (payload: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => {
+    if (!joinedRoomId) return
+    const room = getOrCreateRoom(joinedRoomId)
+    // Only host can set subtitles
+    if (room.hostSocketId && room.hostSocketId !== socket.id) return
+    const tracks = Array.isArray(payload?.subtitles) ? payload.subtitles : []
+    // sanitize minimal fields
+    room.state.subtitles = tracks
+      .filter((t) => typeof t?.src === 'string' && t.src.length > 0)
+      .map((t) => ({
+        src: String(t.src),
+        label: typeof t.label === 'string' && t.label ? t.label : 'Subtitles',
+        lang: typeof t.lang === 'string' && t.lang ? t.lang : undefined,
+        default: !!t.default,
+      }))
+    io.to(joinedRoomId).emit('state', room.state)
   })
 
   socket.on('play', () => {
