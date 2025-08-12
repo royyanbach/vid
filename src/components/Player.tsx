@@ -20,25 +20,19 @@ function formatTime(totalSeconds: number): string {
 }
 
 async function loadMpegtsLibrary(): Promise<any | null> {
-  try {
-    // Prefer local dependency if available
-    // Use vite-ignore so the dev server/build doesn't try to pre-bundle or resolve it at compile time
-    const mod: any = await import(/* @vite-ignore */ 'mpegts.js')
-    return mod?.default ?? mod
-  } catch {
-    // Fallback to CDN UMD build (assigns window.mpegts)
-    if (typeof window === 'undefined') return null
-    if ((window as any).mpegts) return (window as any).mpegts
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js'
-      script.async = true
-      script.onload = () => resolve()
-      script.onerror = () => reject(new Error('Failed to load mpegts.js'))
-      document.head.appendChild(script)
-    })
-    return (window as any).mpegts ?? null
-  }
+  // Load from global or inject from CDN to avoid bundler install-time dependencies
+  if (typeof window === 'undefined') return null
+  if ((window as any).mpegts) return (window as any).mpegts
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script')
+    // Pin a known stable version to avoid unexpected breaking changes
+    script.src = 'https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.min.js'
+    script.async = true
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Failed to load mpegts.js'))
+    document.head.appendChild(script)
+  })
+  return (window as any).mpegts ?? null
 }
 
 export default function Player({
