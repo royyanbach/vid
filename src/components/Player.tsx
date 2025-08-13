@@ -1,5 +1,6 @@
 import Hls from 'hls.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Play,
   Pause,
@@ -28,7 +29,7 @@ type PlayerProps = {
   fullBleed?: boolean
   canControl?: boolean
   onControlsVisibilityChange?: (visible: boolean) => void
-  chatAccessory?: React.ReactNode
+  chatAccessory?: ReactNode | ((containerEl: HTMLElement | null) => ReactNode)
 }
 
 function formatTime(totalSeconds: number): string {
@@ -96,6 +97,7 @@ export default function Player({
   const [areCaptionsVisible, setAreCaptionsVisible] = useState(true)
   const cueOriginalLineRef = useRef<WeakMap<any, any>>(new WeakMap())
   const HIDE_DELAY_MS = 500
+  const chatContainerRef = useRef<HTMLDivElement | null>(null)
 
   // Derive a default subtitle from the same directory: /sub.vtt
   const effectiveSubtitles = useMemo(() => {
@@ -414,7 +416,8 @@ export default function Player({
   }
 
   const toggleFullscreen = async () => {
-    const container = videoRef.current?.parentElement
+    // Request fullscreen on the root container so overlays (chat, controls) are included
+    const container = (videoRef.current?.closest('[data-player-root]') as HTMLElement | null) || videoRef.current?.parentElement
     if (!container) return
     const anyEl = container as any
     try {
@@ -484,7 +487,7 @@ export default function Player({
   }
 
   return (
-    <div className={fullBleed ? 'w-full h-full overflow-hidden bg-black' : 'w-full max-w-5xl mx-auto rounded-lg overflow-hidden bg-black/95 shadow-lg'}>
+    <div data-player-root className={fullBleed ? 'w-full h-full overflow-hidden bg-black' : 'w-full max-w-5xl mx-auto rounded-lg overflow-hidden bg-black/95 shadow-lg'}>
       <div
         className={`${fullBleed ? 'relative w-full h-full bg-black' : 'relative aspect-video bg-black'} ${isPlaying && !areControlsVisible ? 'cursor-none' : ''}`}
         onMouseMove={handleContainerMouseMove}
@@ -550,15 +553,17 @@ export default function Player({
           className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/60 to-transparent transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0'}`}
         />
 
-        {/* Bottom bar: controls (auto-hide) + chat accessory (always visible) */}
-        <div className="absolute inset-x-0 bottom-0 p-3 text-white flex items-end gap-3">
-          {/* Controls block with gradient background, auto-hide */}
+          {/* Bottom bar: controls (auto-hide) + chat accessory (always visible) */}
           <div
-            className={`flex-1 transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            className="absolute inset-x-0 bottom-0 p-3 text-white flex items-end gap-3"
             onMouseEnter={() => setIsControlsHovered(true)}
             onMouseLeave={() => setIsControlsHovered(false)}
           >
-            <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2">
+          {/* Controls block with gradient background, auto-hide */}
+            <div
+              className={`flex-1 transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            >
+              <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2 z-30 max-w-[calc(100%-64px)]">
               {/* Seek bar */}
               <div className="flex items-center gap-3 px-2">
                 <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(current)}</span>
@@ -665,12 +670,10 @@ export default function Player({
             </div>
           </div>
 
-          {/* Chat accessory: stays visible */}
-          {chatAccessory ? (
-            <div className="shrink-0">
-              {chatAccessory}
+            {/* Chat accessory: always visible, anchored bottom-right within fullscreen element */}
+            <div ref={chatContainerRef} className="absolute bottom-6 right-4 z-40">
+              {typeof chatAccessory === 'function' ? chatAccessory(chatContainerRef.current) : chatAccessory ?? null}
             </div>
-          ) : null}
         </div>
       </div>
     </div>

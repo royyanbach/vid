@@ -209,6 +209,8 @@ function RoomPage() {
     if (chatOpen) setUnreadCount(0)
   }, [chatOpen])
 
+  // no-op
+
   // Drift correction loop (non-host only, prefer rVFC, fallback interval) using a PI controller
   useEffect(() => {
     if (isHost) return
@@ -450,26 +452,44 @@ function RoomPage() {
               fullBleed
               onControlsVisibilityChange={setControlsVisible}
               canControl={isHost}
-              chatAccessory={
-                <button
-                  ref={chatButtonRef}
-                  className={`relative size-12 rounded-full grid place-items-center text-white border border-white/20 shadow-lg transition-colors ${
-                    chatOpen ? 'bg-primary' : 'bg-white/10 hover:bg-white/15 backdrop-blur'
-                  }`}
-                  aria-label={chatOpen ? 'Hide chat' : unreadCount > 0 ? `${unreadCount} unread messages. Show chat` : 'Show chat'}
-                  onClick={() => setChatOpen((v) => !v)}
-                >
-                  <MessageSquare className="size-6" />
-                  {!chatOpen && unreadCount > 0 ? (
-                    <>
-                      <span aria-hidden className="absolute -top-1 -right-1 size-5 rounded-full bg-red-500/60 animate-ping" />
-                      <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 grid place-items-center rounded-full bg-red-500 text-white text-[10px] font-medium ring-2 ring-black/40">
-                        {unreadCount > 99 ? '99+' : unreadCount}
-                      </span>
-                    </>
+              chatAccessory={(
+                <div className="relative">
+                  <button
+                    ref={chatButtonRef}
+                    className={`relative size-12 rounded-full grid place-items-center text-white border border-white/20 shadow-lg transition-colors ${
+                      chatOpen ? 'bg-primary' : 'bg-white/10 hover:bg-white/15 backdrop-blur'
+                    }`}
+                    aria-label={chatOpen ? 'Hide chat' : unreadCount > 0 ? `${unreadCount} unread messages. Show chat` : 'Show chat'}
+                    onClick={() => setChatOpen((v) => !v)}
+                  >
+                    <MessageSquare className="size-6" />
+                    {!chatOpen && unreadCount > 0 ? (
+                      <>
+                        <span aria-hidden className="absolute -top-1 -right-1 size-5 rounded-full bg-red-500/60 animate-ping" />
+                        <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 grid place-items-center rounded-full bg-red-500 text-white text-[10px] font-medium ring-2 ring-black/40">
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </span>
+                      </>
+                    ) : null}
+                  </button>
+                  {chatOpen ? (
+                    <div
+                      ref={chatPopupRef}
+                      className="absolute bottom-16 right-0 z-40 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg bg-zinc-950/85 text-white backdrop-blur-sm p-2"
+                    >
+                      <ChatPanel
+                        myId={myId}
+                        messages={messages}
+                        onSend={(text) => {
+                          const s = socketRef.current
+                          if (!s) return
+                          s.emit('chat:send', { text })
+                        }}
+                      />
+                    </div>
                   ) : null}
-                </button>
-              }
+                </div>
+              )}
             />
           ) : (
             <div className="w-full max-w-5xl mx-auto aspect-video grid place-items-center rounded-lg border border-dashed bg-zinc-100">
@@ -515,27 +535,7 @@ function RoomPage() {
         </div>
       ) : null}
 
-      {/* Floating chat widget */}
-      {chatOpen ? (
-        <div
-          ref={chatPopupRef}
-          className="absolute bottom-20 right-3 z-30 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg bg-zinc-950/85 text-white backdrop-blur-sm p-2"
-        >
-          <ChatPanel
-            myId={myId}
-            messages={messages}
-            onSend={(text) => {
-              const s = socketRef.current
-              if (!s) return
-              s.emit('chat:send', { text })
-            }}
-          />
-        </div>
-      ) : null}
-      {/* Fallback for chat button when not provided by Player (shouldn't happen) */}
-      <div className="absolute bottom-3 right-3 z-20 pointer-events-none">
-        <div className="pointer-events-auto" />
-      </div>
+      {/* Chat is now rendered inside Player via chatAccessory */}
     </div>
   )
 }
