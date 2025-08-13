@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type ClientSocket, type ServerState, computeTargetTime, connectSocket, type ChatMessage } from '@/lib/ws'
 import { Button } from '@/components/ui/button'
 import { MessageSquare } from 'lucide-react'
+import VideoStrip from '@/components/VideoStrip'
 
 export const Route = createFileRoute('/room/$id')({
   component: RoomPage,
@@ -452,6 +453,9 @@ function RoomPage() {
               fullBleed
               onControlsVisibilityChange={setControlsVisible}
               canControl={isHost}
+              topRightAccessory={
+                <VideoStrip socket={socketRef.current} myId={myId} />
+              }
               chatAccessory={(
                 <div className="relative">
                   <button

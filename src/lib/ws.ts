@@ -29,6 +29,12 @@ export type ClientSocket = Socket<
     pong: (p: { t0: number; t1: number }) => void
     error: (e: { code: string; message: string }) => void
     chat: (m: ChatMessage) => void
+    'rtc:peers': (p: { peers: string[] }) => void
+    'rtc:peer-joined': (p: { peerId: string }) => void
+    'rtc:peer-left': (p: { peerId: string }) => void
+    'rtc:offer': (p: { from: string; description: RTCSessionDescriptionInit }) => void
+    'rtc:answer': (p: { from: string; description: RTCSessionDescriptionInit }) => void
+    'rtc:ice': (p: { from: string; candidate: RTCIceCandidateInit }) => void
   },
   {
     join: (p: { roomId: string; name?: string; asHost?: boolean; src?: string }) => void
@@ -40,6 +46,11 @@ export type ClientSocket = Socket<
     ping: (p: { t0: number }) => void
     subtitles: (p: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => void
     'chat:send': (p: { text: string }) => void
+    'rtc:join': () => void
+    'rtc:leave': () => void
+    'rtc:offer': (p: { to: string; description: RTCSessionDescriptionInit }) => void
+    'rtc:answer': (p: { to: string; description: RTCSessionDescriptionInit }) => void
+    'rtc:ice': (p: { to: string; candidate: RTCIceCandidateInit }) => void
   }
 >
 

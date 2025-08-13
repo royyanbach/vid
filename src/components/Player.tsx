@@ -30,6 +30,7 @@ type PlayerProps = {
   canControl?: boolean
   onControlsVisibilityChange?: (visible: boolean) => void
   chatAccessory?: ReactNode | ((containerEl: HTMLElement | null) => ReactNode)
+  topRightAccessory?: ReactNode | ((containerEl: HTMLElement | null) => ReactNode)
 }
 
 function formatTime(totalSeconds: number): string {
@@ -69,6 +70,7 @@ export default function Player({
   canControl = true,
   onControlsVisibilityChange,
   chatAccessory,
+  topRightAccessory,
 }: PlayerProps) {
   const defaultSrc = useMemo(() => {
     return (
@@ -98,6 +100,7 @@ export default function Player({
   const cueOriginalLineRef = useRef<WeakMap<any, any>>(new WeakMap())
   const HIDE_DELAY_MS = 500
   const chatContainerRef = useRef<HTMLDivElement | null>(null)
+  const topRightContainerRef = useRef<HTMLDivElement | null>(null)
 
   // Derive a default subtitle from the same directory: /sub.vtt
   const effectiveSubtitles = useMemo(() => {
@@ -553,6 +556,11 @@ export default function Player({
           className={`pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/60 to-transparent transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0'}`}
         />
 
+        {/* Top-right accessory (e.g., video tiles): anchored inside fullscreen element */}
+        <div ref={topRightContainerRef} className="absolute top-3 right-3 z-40 pointer-events-auto">
+          {typeof topRightAccessory === 'function' ? topRightAccessory(topRightContainerRef.current) : topRightAccessory ?? null}
+        </div>
+
           {/* Bottom bar: controls (auto-hide) + chat accessory (always visible) */}
           <div
             className="absolute inset-x-0 bottom-0 p-3 text-white flex items-end gap-3"
@@ -674,6 +682,7 @@ export default function Player({
             <div ref={chatContainerRef} className="absolute bottom-6 right-4 z-40">
               {typeof chatAccessory === 'function' ? chatAccessory(chatContainerRef.current) : chatAccessory ?? null}
             </div>
+
         </div>
       </div>
     </div>

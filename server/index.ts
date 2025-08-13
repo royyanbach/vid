@@ -26,6 +26,7 @@ type Room = {
   users: Map<string, PresenceUser>
   hostSocketId?: string
   heartbeat?: NodeJS.Timeout
+  webrtcParticipants?: Set<string>
 }
 
 const rooms = new Map<string, Room>()
@@ -110,6 +111,37 @@ io.on('connection', (socket) => {
       }, 2000)
     }
 
+  })
+
+  // --- WebRTC signaling ---
+  socket.on('rtc:join', () => {
+    if (!joinedRoomId) return
+    const room = getOrCreateRoom(joinedRoomId)
+    room.webrtcParticipants = room.webrtcParticipants || new Set<string>()
+    room.webrtcParticipants.add(socket.id)
+    const peers = Array.from(room.webrtcParticipants).filter((id) => id !== socket.id)
+    socket.emit('rtc:peers', { peers })
+    socket.to(joinedRoomId).emit('rtc:peer-joined', { peerId: socket.id })
+  })
+
+  socket.on('rtc:leave', () => {
+    if (!joinedRoomId) return
+    const room = getOrCreateRoom(joinedRoomId)
+    room.webrtcParticipants?.delete(socket.id)
+    socket.to(joinedRoomId).emit('rtc:peer-left', { peerId: socket.id })
+  })
+
+  socket.on('rtc:offer', (p: { to: string; description: any }) => {
+    if (!joinedRoomId || !p?.to || !p?.description) return
+    io.to(p.to).emit('rtc:offer', { from: socket.id, description: p.description })
+  })
+  socket.on('rtc:answer', (p: { to: string; description: any }) => {
+    if (!joinedRoomId || !p?.to || !p?.description) return
+    io.to(p.to).emit('rtc:answer', { from: socket.id, description: p.description })
+  })
+  socket.on('rtc:ice', (p: { to: string; candidate: any }) => {
+    if (!joinedRoomId || !p?.to || !p?.candidate) return
+    io.to(p.to).emit('rtc:ice', { from: socket.id, candidate: p.candidate })
   })
 
   socket.on('subtitles', (payload: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => {
@@ -220,6 +252,10 @@ io.on('connection', (socket) => {
     if (!joinedRoomId) return
     const room = getOrCreateRoom(joinedRoomId)
     room.users.delete(socket.id)
+    if (room.webrtcParticipants && room.webrtcParticipants.has(socket.id)) {
+      room.webrtcParticipants.delete(socket.id)
+      socket.to(joinedRoomId!).emit('rtc:peer-left', { peerId: socket.id })
+    }
     if (room.hostSocketId === socket.id) {
       room.hostSocketId = undefined
       // Optionally transfer host to first viewer
