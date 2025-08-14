@@ -136,3 +136,31 @@ code {
     @apply bg-background text-foreground;
   }
 }
+
+/* Floating reaction animation */
+.reaction-float {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  animation: reaction-float var(--dur, 2600ms) cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes reaction-float {
+  0% {
+    transform: translate(0, 0) scale(0.85) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    transform: translate(-8px, -10px) scale(1) rotate(-6deg);
+    opacity: 1;
+  }
+  60% {
+    transform: translate(calc(var(--dx, -120px) * 0.6), calc(var(--dy, -240px) * 0.6)) scale(1.05) rotate(6deg);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(var(--dx, -120px), var(--dy, -240px)) scale(0.9) rotate(0deg);
+    opacity: 0;
+  }
+}

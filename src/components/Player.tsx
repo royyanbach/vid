@@ -571,7 +571,7 @@ export default function Player({
             <div
               className={`flex-1 transition-opacity duration-200 ${areControlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
             >
-              <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2 z-30 max-w-[calc(100%-64px)]">
+              <div className="rounded-md bg-gradient-to-t from-black/80 to-black/20 backdrop-blur-sm ring-1 ring-white/10 p-2 z-30 max-w-[calc(100%-110px)]">
               {/* Seek bar */}
               <div className="flex items-center gap-3 px-2">
                 <span className="tabular-nums text-[11px] min-w-12 text-zinc-200">{formatTime(current)}</span>

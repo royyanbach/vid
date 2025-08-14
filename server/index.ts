@@ -21,6 +21,13 @@ type ChatMessage = {
   text: string
 }
 
+type ReactionEvent = {
+  id: string
+  userId: string
+  emoji: string
+  ts: number
+}
+
 type Room = {
   state: RoomState
   users: Map<string, PresenceUser>
@@ -82,6 +89,7 @@ io.on('connection', (socket) => {
   let joinedRoomId: string | null = null
   let user: PresenceUser | null = null
   let lastMessageAt = 0
+  const lastReactionAtRef: { t: number } = { t: 0 }
 
   socket.on('join', (payload: { roomId: string; name?: string; asHost?: boolean; src?: string }) => {
     const { roomId, name, asHost, src } = payload || ({} as any)
@@ -246,6 +254,27 @@ io.on('connection', (socket) => {
       text,
     }
     io.to(joinedRoomId).emit('chat', msg)
+  })
+
+  // Reactions: lightweight, rate-limited broadcast to room
+  socket.on('reaction:send', (payload: { emoji: string }) => {
+    if (!joinedRoomId) return
+    const room = getOrCreateRoom(joinedRoomId)
+    const sender = user || room.users.get(socket.id)
+    if (!sender) return
+    const now = Date.now()
+    // Basic per-socket rate limit: max ~10/sec
+    if (now - lastReactionAtRef.t < 100) return
+    lastReactionAtRef.t = now
+    const emoji = typeof payload?.emoji === 'string' ? payload.emoji.slice(0, 4) : ''
+    if (!emoji) return
+    const evt: ReactionEvent = {
+      id: `${now.toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      userId: sender.id,
+      emoji,
+      ts: now,
+    }
+    socket.to(joinedRoomId).emit('reaction', evt)
   })
 
   socket.on('disconnect', () => {

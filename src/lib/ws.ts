@@ -21,6 +21,13 @@ export type ChatMessage = {
   text: string
 }
 
+export type ReactionEvent = {
+  id: string
+  userId: string
+  emoji: string
+  ts: number
+}
+
 export type ClientSocket = Socket<
   {
     state: (s: ServerState) => void
@@ -29,6 +36,7 @@ export type ClientSocket = Socket<
     pong: (p: { t0: number; t1: number }) => void
     error: (e: { code: string; message: string }) => void
     chat: (m: ChatMessage) => void
+    reaction: (e: ReactionEvent) => void
     'rtc:peers': (p: { peers: string[] }) => void
     'rtc:peer-joined': (p: { peerId: string }) => void
     'rtc:peer-left': (p: { peerId: string }) => void
@@ -46,6 +54,7 @@ export type ClientSocket = Socket<
     ping: (p: { t0: number }) => void
     subtitles: (p: { subtitles: Array<{ src: string; label: string; lang?: string; default?: boolean }> }) => void
     'chat:send': (p: { text: string }) => void
+    'reaction:send': (p: { emoji: string }) => void
     'rtc:join': () => void
     'rtc:leave': () => void
     'rtc:offer': (p: { to: string; description: RTCSessionDescriptionInit }) => void

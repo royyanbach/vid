@@ -5,6 +5,7 @@ import { type ClientSocket, type ServerState, computeTargetTime, connectSocket, 
 import { Button } from '@/components/ui/button'
 import { MessageSquare } from 'lucide-react'
 import VideoStrip from '@/components/VideoStrip'
+import ReactionWidget from '@/components/ReactionWidget'
 
 export const Route = createFileRoute('/room/$id')({
   component: RoomPage,
@@ -457,41 +458,44 @@ function RoomPage() {
                 <VideoStrip socket={socketRef.current} myId={myId} />
               }
               chatAccessory={(
-                <div className="relative">
-                  <button
-                    ref={chatButtonRef}
-                    className={`relative size-12 rounded-full grid place-items-center text-white border border-white/20 shadow-lg transition-colors ${
-                      chatOpen ? 'bg-primary' : 'bg-white/10 hover:bg-white/15 backdrop-blur'
-                    }`}
-                    aria-label={chatOpen ? 'Hide chat' : unreadCount > 0 ? `${unreadCount} unread messages. Show chat` : 'Show chat'}
-                    onClick={() => setChatOpen((v) => !v)}
-                  >
-                    <MessageSquare className="size-6" />
-                    {!chatOpen && unreadCount > 0 ? (
-                      <>
-                        <span aria-hidden className="absolute -top-1 -right-1 size-5 rounded-full bg-red-500/60 animate-ping" />
-                        <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 grid place-items-center rounded-full bg-red-500 text-white text-[10px] font-medium ring-2 ring-black/40">
-                          {unreadCount > 99 ? '99+' : unreadCount}
-                        </span>
-                      </>
-                    ) : null}
-                  </button>
-                  {chatOpen ? (
-                    <div
-                      ref={chatPopupRef}
-                      className="absolute bottom-16 right-0 z-40 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg bg-zinc-950/85 text-white backdrop-blur-sm p-2"
+                <div className="relative flex items-center gap-3">
+                  <ReactionWidget socket={socketRef.current} myId={myId} />
+                  <div className="relative">
+                    <button
+                      ref={chatButtonRef}
+                      className={`relative size-12 rounded-full grid place-items-center text-white border border-white/20 shadow-lg transition-colors ${
+                        chatOpen ? 'bg-primary' : 'bg-white/10 hover:bg-white/15 backdrop-blur'
+                      }`}
+                      aria-label={chatOpen ? 'Hide chat' : unreadCount > 0 ? `${unreadCount} unread messages. Show chat` : 'Show chat'}
+                      onClick={() => setChatOpen((v) => !v)}
                     >
-                      <ChatPanel
-                        myId={myId}
-                        messages={messages}
-                        onSend={(text) => {
-                          const s = socketRef.current
-                          if (!s) return
-                          s.emit('chat:send', { text })
-                        }}
-                      />
-                    </div>
-                  ) : null}
+                      <MessageSquare className="size-6" />
+                      {!chatOpen && unreadCount > 0 ? (
+                        <>
+                          <span aria-hidden className="absolute -top-1 -right-1 size-5 rounded-full bg-red-500/60 animate-ping" />
+                          <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 grid place-items-center rounded-full bg-red-500 text-white text-[10px] font-medium ring-2 ring-black/40">
+                            {unreadCount > 99 ? '99+' : unreadCount}
+                          </span>
+                        </>
+                      ) : null}
+                    </button>
+                    {chatOpen ? (
+                      <div
+                        ref={chatPopupRef}
+                        className="absolute bottom-16 right-0 z-40 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg bg-zinc-950/85 text-white backdrop-blur-sm p-2"
+                      >
+                        <ChatPanel
+                          myId={myId}
+                          messages={messages}
+                          onSend={(text) => {
+                            const s = socketRef.current
+                            if (!s) return
+                            s.emit('chat:send', { text })
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               )}
             />
