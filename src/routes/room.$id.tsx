@@ -231,11 +231,11 @@ function RoomPage() {
       // show bubble if chat is closed (don't show own messages)
       if (!chatOpenRef.current && m.userId !== myIdRef.current) {
         setBubbleMessage(m)
-        // // auto-hide after 4 seconds
-        // if (bubbleTimeoutRef.current) window.clearTimeout(bubbleTimeoutRef.current)
-        // bubbleTimeoutRef.current = window.setTimeout(() => {
-        //   setBubbleMessage(null)
-        // }, 4000)
+        // auto-hide after 4 seconds
+        if (bubbleTimeoutRef.current) window.clearTimeout(bubbleTimeoutRef.current)
+        bubbleTimeoutRef.current = window.setTimeout(() => {
+          setBubbleMessage(null)
+        }, 4000)
       }
     })
     // no more chat history on join: save memory and avoid replay
