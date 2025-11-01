@@ -16,6 +16,8 @@ function RoomPage() {
   const [state, setState] = useState<ServerState | null>(null)
   const stateRef = useRef<ServerState | null>(null)
   const [users, setUsers] = useState<Array<{ id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }>>([])
+  const previousUsersRef = useRef<Array<{ id: string; name: string; role: 'host' | 'viewer'; ready?: boolean }>>([])
+  const isFirstPresenceRef = useRef(true)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const chatOpenRef = useRef(false)
@@ -25,6 +27,7 @@ function RoomPage() {
   const rttRef = useRef(200)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [myId, setMyId] = useState<string>('')
+  const myIdRef = useRef<string>('')
   const isHost = useMemo(() => users.some((u) => u.id === myId && u.role === 'host'), [users, myId])
   const piRef = useRef({ integral: 0, lastTime: 0 })
   const lastPlayReqRef = useRef(0)
@@ -35,6 +38,8 @@ function RoomPage() {
   const chatButtonRef = useRef<HTMLButtonElement | null>(null)
   const chatPopupRef = useRef<HTMLDivElement | null>(null)
   const joinAutoplayArmedRef = useRef(false)
+  const [bubbleMessage, setBubbleMessage] = useState<ChatMessage | null>(null)
+  const bubbleTimeoutRef = useRef<number | null>(null)
 
   const ensurePlaybackState = useCallback((desiredPlaying: boolean) => {
     const video = videoRef.current
@@ -79,7 +84,11 @@ function RoomPage() {
     const socket = connectSocket({ baseUrl: wsUrl, basePath: wsBasePath, query: { roomId: id } })
     socketRef.current = socket
 
-    socket.on('connect', () => setMyId(socket.id || ''))
+    socket.on('connect', () => {
+      const id = socket.id || ''
+      setMyId(id)
+      myIdRef.current = id
+    })
 
     const applyStateToPlayer = (s: ServerState) => {
       if (isHost) return
@@ -137,7 +146,78 @@ function RoomPage() {
         }
       }
     })
-    socket.on('presence', (p) => setUsers(p.users))
+    socket.on('presence', (p) => {
+      const prev = previousUsersRef.current
+      const current = p.users
+
+      // Create system messages for joins and leaves
+      const systemMessages: ChatMessage[] = []
+
+      if (isFirstPresenceRef.current) {
+        // On first presence, show all existing users as joined (except yourself)
+        current.forEach((user) => {
+          if (user.id !== myIdRef.current) {
+            systemMessages.push({
+              id: `system-join-${user.id}-${Date.now()}-${Math.random()}`,
+              userId: 'system',
+              name: 'System',
+              ts: Date.now(),
+              text: `${user.name} joined`,
+            })
+          }
+        })
+        isFirstPresenceRef.current = false
+      } else {
+        // Find users who joined (in current but not in prev)
+        const joined = current.filter(
+          (u) => !prev.some((prevU) => prevU.id === u.id)
+        )
+
+        // Find users who left (in prev but not in current)
+        const left = prev.filter(
+          (prevU) => !current.some((u) => u.id === prevU.id)
+        )
+
+        joined.forEach((user) => {
+          // Don't show a message for yourself joining
+          if (user.id !== myIdRef.current) {
+            systemMessages.push({
+              id: `system-join-${user.id}-${Date.now()}`,
+              userId: 'system',
+              name: 'System',
+              ts: Date.now(),
+              text: `${user.name} joined`,
+            })
+          }
+        })
+
+        left.forEach((user) => {
+          systemMessages.push({
+            id: `system-left-${user.id}-${Date.now()}`,
+            userId: 'system',
+            name: 'System',
+            ts: Date.now(),
+            text: `${user.name} left the room`,
+          })
+        })
+      }
+
+      // Update users state
+      setUsers(current)
+      previousUsersRef.current = current
+
+      // Add system messages if any
+      if (systemMessages.length > 0) {
+        setMessages((prev) => {
+          const next = [...prev, ...systemMessages]
+          // keep bounded length on client too
+          if (next.length > 300) next.splice(0, next.length - 300)
+          return next
+        })
+        // increment unread if widget is closed
+        setUnreadCount((prev) => (chatOpenRef.current ? 0 : Math.min(999, prev + 1)))
+      }
+    })
     // chat wires
     socket.on('chat', (m) => {
       setMessages((prev) => {
@@ -148,6 +228,15 @@ function RoomPage() {
       })
       // increment unread if widget is closed
       setUnreadCount((prev) => (chatOpenRef.current ? 0 : Math.min(999, prev + 1)))
+      // show bubble if chat is closed (don't show own messages)
+      if (!chatOpenRef.current && m.userId !== myIdRef.current) {
+        setBubbleMessage(m)
+        // // auto-hide after 4 seconds
+        // if (bubbleTimeoutRef.current) window.clearTimeout(bubbleTimeoutRef.current)
+        // bubbleTimeoutRef.current = window.setTimeout(() => {
+        //   setBubbleMessage(null)
+        // }, 4000)
+      }
     })
     // no more chat history on join: save memory and avoid replay
 
@@ -175,6 +264,10 @@ function RoomPage() {
     return () => {
       clearInterval(pingIv)
       socket.disconnect()
+      if (bubbleTimeoutRef.current) {
+        window.clearTimeout(bubbleTimeoutRef.current)
+        bubbleTimeoutRef.current = null
+      }
     }
   }, [id, wsUrl, wsBasePath])
 
@@ -205,10 +298,21 @@ function RoomPage() {
     }
   }, [isHost])
 
-  // keep ref in sync to avoid stale closure in socket handler
+  // keep refs in sync to avoid stale closure in socket handler
+  useEffect(() => {
+    myIdRef.current = myId
+  }, [myId])
+
   useEffect(() => {
     chatOpenRef.current = chatOpen
-    if (chatOpen) setUnreadCount(0)
+    if (chatOpen) {
+      setUnreadCount(0)
+      setBubbleMessage(null)
+      if (bubbleTimeoutRef.current) {
+        window.clearTimeout(bubbleTimeoutRef.current)
+        bubbleTimeoutRef.current = null
+      }
+    }
   }, [chatOpen])
 
   // no-op
@@ -482,7 +586,7 @@ function RoomPage() {
                     {chatOpen ? (
                       <div
                         ref={chatPopupRef}
-                        className="absolute bottom-16 right-0 z-40 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg bg-zinc-950/85 text-white backdrop-blur-sm p-2"
+                        className="absolute bottom-16 right-0 z-40 w-[min(92vw,360px)] max-h-[70vh] flex flex-col rounded-lg text-white  p-2"
                       >
                         <ChatPanel
                           myId={myId}
@@ -493,6 +597,11 @@ function RoomPage() {
                             s.emit('chat:send', { text })
                           }}
                         />
+                      </div>
+                    ) : null}
+                    {!chatOpen && bubbleMessage ? (
+                      <div className="absolute bottom-16 right-0 z-40 w-[min(92vw,200px)] animate-[fadeIn_0.3s_ease-out]">
+                        <BubbleChat message={bubbleMessage} myId={myId} />
                       </div>
                     ) : null}
                   </div>
@@ -594,10 +703,10 @@ function ChatPanel({
       <div
         ref={listRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-2 space-y-2 bg-zinc-900/40 rounded max-h-[200px]"
+        className="flex-1 overflow-y-auto p-2 space-y-2 rounded max-h-[200px]"
       >
         {messages.map((m) => (
-          <MessageRow key={m.id} self={m.userId === myId} name={m.name} text={m.text} ts={m.ts} />
+          <MessageRow key={m.id} self={m.userId === myId} isSystem={m.userId === 'system'} name={m.name} text={m.text} ts={m.ts} />
         ))}
       </div>
       <div className="p-2 pt-0 flex items-center gap-2">
@@ -613,7 +722,7 @@ function ChatPanel({
           placeholder="Message…"
           className="flex-1 h-9 px-3 rounded-md bg-zinc-900/60 text-white placeholder:text-zinc-400 outline-none ring-1 ring-white/10 focus:ring-white/20"
         />
-        <Button size="sm" onClick={send} disabled={!draft.trim()} className="bg-white/10 hover:bg-white/15 text-white ring-1 ring-white/10">
+        <Button size="sm" onClick={send} disabled={!draft.trim()} className="backdrop-contrast-30 bg-white/10 hover:bg-white/15 text-white ring-1 ring-white/10">
           Send
         </Button>
       </div>
@@ -623,11 +732,13 @@ function ChatPanel({
 
 const MessageRow = memo(function MessageRow({
   self,
+  isSystem,
   name,
   text,
   ts,
 }: {
   self: boolean
+  isSystem?: boolean
   name: string
   text: string
   ts: number
@@ -637,12 +748,21 @@ const MessageRow = memo(function MessageRow({
   const hh = d.getHours().toString().padStart(2, '0')
   const mm = d.getMinutes().toString().padStart(2, '0')
   const time = `${hh}:${mm}`
+
+  if (isSystem) {
+    return (
+      <div className="flex justify-center">
+        <div className="text-xs text-white/50 italic px-2 py-1">
+          {text}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={`flex ${self ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[80%] rounded-md px-2.5 py-1.5 text-sm ${
-          self ? 'bg-white/15 text-white ring-1 ring-white/10' : 'bg-zinc-800/70 text-white'
-        }`}
+        className={`max-w-[80%] rounded-md px-2.5 py-1.5 text-sm backdrop-brightness-50`}
       >
         <div className="flex items-center gap-2 mb-0.5 text-[10px] opacity-80">
           <span className="font-medium truncate max-w-40">{self ? 'You' : name}</span>
@@ -653,4 +773,23 @@ const MessageRow = memo(function MessageRow({
     </div>
   )
 })
+
+// Bubble chat component for showing new messages when chat is closed
+function BubbleChat({ message, myId }: { message: ChatMessage; myId: string }) {
+  const d = new Date(message.ts)
+  const hh = d.getHours().toString().padStart(2, '0')
+  const mm = d.getMinutes().toString().padStart(2, '0')
+  const time = `${hh}:${mm}`
+  const isSelf = message.userId === myId
+
+  return (
+    <div className="rounded-lg backdrop-brightness-50 border border-white/20 shadow-lg p-3 text-white">
+      <div className="flex items-center gap-2 mb-1.5 text-xs opacity-90">
+        <span className="font-medium truncate max-w-40">{isSelf ? 'You' : message.name}</span>
+        <span className="text-white/60">{time}</span>
+      </div>
+      <div className="text-sm whitespace-pre-wrap break-words">{message.text}</div>
+    </div>
+  )
+}
 
